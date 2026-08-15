@@ -2,6 +2,7 @@
 #define __SYLAR_DB_DB_H__
 
 #include <memory>
+#include <cstdint>
 #include <string>
 
 namespace sylar {

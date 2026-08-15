@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>

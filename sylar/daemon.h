@@ -2,7 +2,9 @@
 #define __SYLAR_DAEMON_H__
 
 #include <unistd.h>
+#include <cstdint>
 #include <functional>
+#include <string>
 #include "sylar/singleton.h"
 
 namespace sylar {

@@ -12,6 +12,7 @@
 #include <memory>
 #include <functional>
 #include <ucontext.h>
+#include <cstdint>
 
 namespace sylar {
 

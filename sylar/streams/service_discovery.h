@@ -2,12 +2,12 @@
 #define __SYLAR_STREAMS_SERVICE_DISCOVERY_H__
 
 #include <memory>
+#include <functional>
+#include <cstdint>
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
 #include "sylar/mutex.h"
-#include "sylar/iomanager.h"
-#include "sylar/zk_client.h"
 
 namespace sylar {
 
@@ -65,42 +65,6 @@ protected:
     std::unordered_map<std::string, std::unordered_set<std::string> > m_queryInfos;
 
     service_callback m_cb;
-};
-
-class ZKServiceDiscovery : public IServiceDiscovery
-                          ,public std::enable_shared_from_this<ZKServiceDiscovery> {
-public:
-    typedef std::shared_ptr<ZKServiceDiscovery> ptr;
-    ZKServiceDiscovery(const std::string& hosts);
-    const std::string& getSelfInfo() const { return m_selfInfo;}
-    void setSelfInfo(const std::string& v) { m_selfInfo = v;}
-    const std::string& getSelfData() const { return m_selfData;}
-    void setSelfData(const std::string& v) { m_selfData = v;}
-
-    virtual void start();
-    virtual void stop();
-private:
-    void onWatch(int type, int stat, const std::string& path, ZKClient::ptr);
-    void onZKConnect(const std::string& path, ZKClient::ptr client);
-    void onZKChild(const std::string& path, ZKClient::ptr client);
-    void onZKChanged(const std::string& path, ZKClient::ptr client);
-    void onZKDeleted(const std::string& path, ZKClient::ptr client);
-    void onZKExpiredSession(const std::string& path, ZKClient::ptr client);
-
-    bool registerInfo(const std::string& domain, const std::string& service, 
-                      const std::string& ip_and_port, const std::string& data);
-    bool queryInfo(const std::string& domain, const std::string& service);
-    bool queryData(const std::string& domain, const std::string& service);
-
-    bool existsOrCreate(const std::string& path);
-    bool getChildren(const std::string& path);
-private:
-    std::string m_hosts;
-    std::string m_selfInfo;
-    std::string m_selfData;
-    ZKClient::ptr m_client;
-    sylar::Timer::ptr m_timer;
-    bool m_isOnTimer = false;
 };
 
 }

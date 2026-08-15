@@ -2,6 +2,7 @@
 #define __SYLAR_DB_FOX_THREAD_H__
 
 #include <thread>
+#include <string>
 #include <vector>
 #include <list>
 #include <map>

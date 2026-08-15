@@ -55,7 +55,6 @@ set(LIB_SRC
     sylar/config.cc
     sylar/db/fox_thread.cc
     sylar/db/mysql.cc
-    sylar/db/redis.cc
     sylar/db/sqlite3.cc
     sylar/ds/bitmap.cc
     sylar/ds/roaring_bitmap.cc
@@ -110,7 +109,6 @@ set(LIB_SRC
     sylar/util/hash_util.cc
     sylar/worker.cc
     sylar/application.cc
-    sylar/zk_client.cc
     )
 
 ragelmaker(sylar/http/http11_parser.rl LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/sylar/http)
@@ -123,6 +121,9 @@ protobufmaker(sylar/ns/ns_protobuf.proto LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR})
 #list(APPEND LIB_SRC ${PB_SRCS})
 #
 #message(STATUS ${LIB_SRC})
+
+set_source_files_properties(sylar/ds/roaring.c PROPERTIES
+    COMPILE_OPTIONS "-Wno-error=use-after-free;-Wno-error=unused-but-set-variable")
 
 add_library(sylar SHARED ${LIB_SRC})
 force_redefine_file_macro_for_sources(sylar)
@@ -146,9 +147,7 @@ set(LIBS
         ${OPENSSL_LIBRARIES}
         ${PROTOBUF_LIBRARIES}
         event
-        hiredis_vip
-        mysqlclient_r
-        zookeeper_mt
+        mysqlclient
         sqlite3
         tinyxml2
         jemalloc
@@ -200,8 +199,6 @@ sylar_add_executable(test_email  "tests/test_email.cc" sylar "${LIBS}")
 sylar_add_executable(test_mysql "tests/test_mysql.cc" sylar "${LIBS}")
 sylar_add_executable(test_nameserver "tests/test_nameserver.cc" sylar "${LIBS}")
 sylar_add_executable(test_bitmap "tests/test_bitmap.cc" sylar "${LIBS}")
-sylar_add_executable(test_zkclient "tests/test_zookeeper.cc" sylar "${LIBS}")
-sylar_add_executable(test_service_discovery "tests/test_service_discovery.cc" sylar "${LIBS}")
 
 set(ORM_SRCS
     sylar/orm/table.cc
@@ -211,8 +208,6 @@ set(ORM_SRCS
     sylar/orm/util.cc
     )
 sylar_add_executable(orm "${ORM_SRCS}" sylar "${LIBS}")
-
-add_library(test_module SHARED tests/test_module.cc)
 
 sylar_add_executable(bin_sylar "sylar/main.cc" sylar "${LIBS}")
 set_target_properties(bin_sylar PROPERTIES OUTPUT_NAME "sylar")

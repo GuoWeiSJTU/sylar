@@ -527,12 +527,10 @@ void Bitmap::rforeach(std::function<bool(uint32_t)> cb) {
     uint32_t cur_pos = m_size - 1;
     uint64_t tmp = 0;
 
-    int begin = m_dataSize - 1; 
     if(m_size % U64_VALUE_SIZE) {
         int32_t start = m_dataSize - 1;
         for(int32_t i = start; i >= (int32_t)(max_size * U64_DIV_BASE);
                 --i) {
-            --begin;
             tmp = m_data[i];
             if(!tmp) {
                 if(i == start) {

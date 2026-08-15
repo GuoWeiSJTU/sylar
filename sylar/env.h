@@ -4,6 +4,7 @@
 #include "sylar/singleton.h"
 #include "sylar/thread.h"
 #include <map>
+#include <string>
 #include <vector>
 
 namespace sylar {

@@ -1,12 +1,11 @@
 #include "service_discovery.h"
-#include "sylar/log.h"
+#include "sylar/util.h"
+#include <sstream>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
 namespace sylar {
-
-static sylar::Logger::ptr g_logger = SYLAR_LOG_NAME("system");
 
 ServiceItemInfo::ptr ServiceItemInfo::Create(const std::string& ip_and_port, const std::string& data) {
     auto pos = ip_and_port.find(':');
@@ -72,6 +71,7 @@ void IServiceDiscovery::listQueryServer(std::unordered_map<std::string
     infos = m_queryInfos;
 }
 
+#if 0
 ZKServiceDiscovery::ZKServiceDiscovery(const std::string& hosts)
     :m_hosts(hosts) {
 }
@@ -365,5 +365,6 @@ void ZKServiceDiscovery::onWatch(int type, int stat, const std::string& path, ZK
         << " type=" << type << " stat=" << stat
         << " path=" << path << " client=" << client;
 }
+#endif
 
 }

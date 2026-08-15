@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string.h>
+#include <vector>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
@@ -261,12 +262,71 @@ std::string md5sum(const std::string &data) {
 }
 
 std::string sha0sum(const void *data, size_t len) {
-    SHA_CTX ctx;
-    SHA_Init(&ctx);
-    SHA_Update(&ctx, data, len);
     std::string result;
+    std::vector<uint8_t> msg((const uint8_t*)data, (const uint8_t*)data + len);
+    uint64_t bit_len = static_cast<uint64_t>(len) * 8;
+    msg.push_back(0x80);
+    while((msg.size() % 64) != 56) {
+        msg.push_back(0);
+    }
+    for(int i = 7; i >= 0; --i) {
+        msg.push_back(static_cast<uint8_t>(bit_len >> (i * 8)));
+    }
+
+    uint32_t h[5] = {
+        0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0
+    };
+    for(size_t offset = 0; offset < msg.size(); offset += 64) {
+        uint32_t w[80];
+        for(int i = 0; i < 16; ++i) {
+            size_t p = offset + i * 4;
+            w[i] = (static_cast<uint32_t>(msg[p]) << 24)
+                | (static_cast<uint32_t>(msg[p + 1]) << 16)
+                | (static_cast<uint32_t>(msg[p + 2]) << 8)
+                | static_cast<uint32_t>(msg[p + 3]);
+        }
+        for(int i = 16; i < 80; ++i) {
+            w[i] = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+        }
+
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for(int i = 0; i < 80; ++i) {
+            uint32_t f;
+            uint32_t k;
+            if(i < 20) {
+                f = (b & c) | ((~b) & d);
+                k = 0x5a827999;
+            } else if(i < 40) {
+                f = b ^ c ^ d;
+                k = 0x6ed9eba1;
+            } else if(i < 60) {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8f1bbcdc;
+            } else {
+                f = b ^ c ^ d;
+                k = 0xca62c1d6;
+            }
+            uint32_t t = ((a << 5) | (a >> 27)) + f + e + k + w[i];
+            e = d;
+            d = c;
+            c = (b << 30) | (b >> 2);
+            b = a;
+            a = t;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+    }
+
     result.resize(SHA_DIGEST_LENGTH);
-    SHA_Final((unsigned char*)&result[0], &ctx);
+    for(int i = 0; i < 5; ++i) {
+        result[i * 4] = static_cast<char>(h[i] >> 24);
+        result[i * 4 + 1] = static_cast<char>(h[i] >> 16);
+        result[i * 4 + 2] = static_cast<char>(h[i] >> 8);
+        result[i * 4 + 3] = static_cast<char>(h[i]);
+    }
     return result;
 }
 
