@@ -23,9 +23,8 @@ namespace sylar {
 /**
  * @brief Nonblocking socket adapter for the C++20 coroutine runtime.
  *
- * It deliberately owns a raw descriptor rather than the legacy Socket class,
- * allowing the new stack to be adopted incrementally without Fiber/hook
- * dependencies.
+ * It deliberately owns a raw descriptor and exposes deadlines and
+ * cancellation explicitly, without process-wide syscall interception.
  */
 class AsyncSocket : public std::enable_shared_from_this<AsyncSocket> {
 public:

@@ -51,8 +51,6 @@ set(LIB_SRC
     sylar/email/smtp.cc
     sylar/env.cc
     sylar/daemon.cc
-    sylar/fd_manager.cc
-    sylar/fiber.cc
     sylar/http/http.cc
     sylar/http/http_connection.cc
     sylar/http/async_http_session.cc
@@ -64,30 +62,18 @@ set(LIB_SRC
     sylar/http/servlets/config_servlet.cc
     sylar/http/servlets/status_servlet.cc
     sylar/http/session_data.cc
-    sylar/http/ws_connection.cc
     sylar/http/ws_session.cc
     sylar/http/ws_server.cc
     sylar/http/ws_servlet.cc
-    sylar/hook.cc
-    sylar/iomanager.cc
-    sylar/library.cc
     sylar/log.cc
-    sylar/module.cc
     sylar/mutex.cc
-    sylar/ns/name_server_module.cc
-    sylar/ns/ns_client.cc
-    sylar/ns/ns_protocol.cc
     sylar/protocol.cc
     sylar/rock/rock_protocol.cc
+    sylar/rock/async_rock_session.cc
     sylar/rock/rock_server.cc
-    sylar/rock/rock_stream.cc
-    sylar/scheduler.cc
     sylar/socket.cc
     sylar/stream.cc
-    sylar/streams/async_socket_stream.cc
     sylar/streams/socket_stream.cc
-    sylar/streams/load_balance.cc
-    sylar/streams/service_discovery.cc
     sylar/streams/zlib_stream.cc
     sylar/tcp_server.cc
     sylar/timer.cc
@@ -96,19 +82,20 @@ set(LIB_SRC
     sylar/util/crypto_util.cc
     sylar/util/json_util.cc
     sylar/util/hash_util.cc
-    sylar/worker.cc
     sylar/application.cc
     sylar/coroutine/executor.cc
     sylar/coroutine/reactor.cc
     sylar/coroutine/timer_queue.cc
     sylar/net/async_socket.cc
+    sylar/net/async_tcp_server.cc
     )
 
 ragelmaker(sylar/http/http11_parser.rl LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/sylar/http)
 ragelmaker(sylar/http/httpclient_parser.rl LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/sylar/http)
 ragelmaker(sylar/uri.rl LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/sylar)
 
-protobufmaker(sylar/ns/ns_protobuf.proto LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR})
+# The nameserver protobuf module is optional and is not part of the coroutine
+# runtime library.
 #PROTOBUF_GENERATE_CPP(PB_SRCS PB_HDRS sylar/ns/ns_protobuf.proto)
 #message("****${PB_SRCS}***${PB_HDRS}****")
 #list(APPEND LIB_SRC ${PB_SRCS})
@@ -126,6 +113,8 @@ target_compile_features(sylar
     PRIVATE c_std_11
 )
 set_target_properties(sylar PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
@@ -180,86 +169,32 @@ set(LIBS
         sylar
         )
 
-set(SYLAR_INTEGRATION_TESTS
-    test_tcp_server
-    test_http_server
-    test_socket
-    test_ws_server
-    test_ws_client
-    test_application
-    test_http_connection
-    test_daemon
-    test_sqlite3
-    test_mysql
-    test_rock
-    test_email
-    test_nameserver
-)
+set(SYLAR_INTEGRATION_TESTS test_http_server)
 
-set(SYLAR_SLOW_TESTS
-    test_hashmultimap
-    test_hashmap
-    test_dict
-    test_thread
-    test_iomanager
-    test_bitmap
-)
-set(SYLAR_LEGACY_TESTS
-    test1
-    test_fiber
-    test_scheduler
-)
+set(SYLAR_SLOW_TESTS test_thread test_bitmap)
+set(SYLAR_LEGACY_TESTS)
 set(SYLAR_ENVIRONMENT_TESTS
     test_config
     test_uri
 )
 sylar_add_executable(test_util "tests/test_util.cc" sylar "${LIBS}")
-sylar_add_executable(test_hashmultimap "tests/test_hashmultimap.cc" sylar "${LIBS}")
-sylar_add_executable(test_hashmap "tests/test_hashmap.cc" sylar "${LIBS}")
-sylar_add_executable(test_dict "tests/test_dict.cc" sylar "${LIBS}")
 sylar_add_executable(test_array "tests/test_array.cc" sylar "${LIBS}")
 sylar_add_executable(test_coroutine "tests/test_coroutine.cc" sylar "${LIBS}")
 if(BUILD_TEST)
-sylar_add_executable(test1 "tests/test.cc" sylar "${LIBS}")
 sylar_add_executable(test_config "tests/test_config.cc" sylar "${LIBS}")
 sylar_add_executable(test_thread "tests/test_thread.cc" sylar "${LIBS}")
-sylar_add_executable(test_fiber "tests/test_fiber.cc" sylar "${LIBS}")
-sylar_add_executable(test_scheduler "tests/test_scheduler.cc" sylar "${LIBS}")
-sylar_add_executable(test_iomanager "tests/test_iomanager.cc" sylar "${LIBS}")
-sylar_add_executable(test_hook "tests/test_hook.cc" sylar "${LIBS}")
 sylar_add_executable(test_address "tests/test_address.cc" sylar "${LIBS}")
-sylar_add_executable(test_socket "tests/test_socket.cc" sylar "${LIBS}")
 sylar_add_executable(test_bytearray "tests/test_bytearray.cc" sylar "${LIBS}")
 sylar_add_executable(test_http "tests/test_http.cc" sylar "${LIBS}")
 sylar_add_executable(test_http_parser "tests/test_http_parser.cc" sylar "${LIBS}")
-sylar_add_executable(test_tcp_server "tests/test_tcp_server.cc" sylar "${LIBS}")
 sylar_add_executable(echo_server "examples/echo_server.cc" sylar "${LIBS}")
 sylar_add_executable(test_http_server "tests/test_http_server.cc" sylar "${LIBS}")
 sylar_add_executable(test_uri "tests/test_uri.cc" sylar "${LIBS}")
 sylar_add_executable(my_http_server "samples/my_http_server.cc" sylar "${LIBS}")
-
-sylar_add_executable(echo_server_udp "examples/echo_server_udp.cc" sylar "${LIBS}")
-sylar_add_executable(echo_udp_client "examples/echo_udp_client.cc" sylar "${LIBS}")
-
-sylar_add_executable(test_daemon "tests/test_daemon.cc" sylar "${LIBS}")
 sylar_add_executable(test_env "tests/test_env.cc" sylar "${LIBS}")
-sylar_add_executable(test_ws_server "tests/test_ws_server.cc" sylar "${LIBS}")
-sylar_add_executable(test_ws_client "tests/test_ws_client.cc" sylar "${LIBS}")
-sylar_add_executable(test_application "tests/test_application.cc" sylar "${LIBS}")
-
-sylar_add_executable(test_http_connection "tests/test_http_connection.cc" sylar "${LIBS}")
-sylar_add_executable(test_lru "tests/test_lru.cc" sylar "${LIBS}")
-sylar_add_executable(test_timed_cache "tests/test_timed_cache.cc" sylar "${LIBS}")
-sylar_add_executable(test_timed_lru_cache "tests/test_timed_lru_cache.cc" sylar "${LIBS}")
-sylar_add_executable(test_zlib_stream "tests/test_zlib_stream.cc" sylar "${LIBS}")
 
 endif()
 sylar_add_executable(test_crypto "tests/test_crypto.cc" sylar "${LIBS}")
-sylar_add_executable(test_sqlite3 "tests/test_sqlite3.cc" sylar "${LIBS}")
-sylar_add_executable(test_rock "tests/test_rock.cc" sylar "${LIBS}")
-sylar_add_executable(test_email  "tests/test_email.cc" sylar "${LIBS}")
-sylar_add_executable(test_mysql "tests/test_mysql.cc" sylar "${LIBS}")
-sylar_add_executable(test_nameserver "tests/test_nameserver.cc" sylar "${LIBS}")
 sylar_add_executable(test_bitmap "tests/test_bitmap.cc" sylar "${LIBS}")
 
 set(ORM_SRCS
@@ -269,8 +204,6 @@ set(ORM_SRCS
     sylar/orm/orm.cc
     sylar/orm/util.cc
     )
-sylar_add_executable(orm "${ORM_SRCS}" sylar "${LIBS}")
-
 sylar_add_executable(bin_sylar "sylar/main.cc" sylar "${LIBS}")
 set_target_properties(bin_sylar PROPERTIES OUTPUT_NAME "sylar")
 

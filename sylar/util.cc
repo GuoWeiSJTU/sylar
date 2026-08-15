@@ -12,7 +12,6 @@
 #include <google/protobuf/unknown_field_set.h>
 
 #include "log.h"
-#include "fiber.h"
 
 namespace sylar {
 
@@ -22,8 +21,8 @@ pid_t GetThreadId() {
     return syscall(SYS_gettid);
 }
 
-uint32_t GetFiberId() {
-    return sylar::Fiber::GetFiberId();
+uint32_t GetCoroutineId() {
+    return 0;
 }
 
 static std::string demangle(const char* str) {

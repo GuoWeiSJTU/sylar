@@ -12,7 +12,6 @@
 #include "sylar/stream.h"
 #include "sylar/socket.h"
 #include "sylar/mutex.h"
-#include "sylar/iomanager.h"
 
 namespace sylar {
 

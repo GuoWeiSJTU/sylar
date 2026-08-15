@@ -1,10 +1,9 @@
 #include "socket.h"
-#include "iomanager.h"
-#include "fd_manager.h"
 #include "log.h"
-#include "macro.h"
-#include "hook.h"
 #include <limits.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <cstring>
 
 namespace sylar {
 
@@ -69,11 +68,10 @@ Socket::~Socket() {
 }
 
 int64_t Socket::getSendTimeout() {
-    FdCtx::ptr ctx = FdMgr::GetInstance()->get(m_sock);
-    if(ctx) {
-        return ctx->getTimeout(SO_SNDTIMEO);
-    }
-    return -1;
+    timeval tv{};
+    socklen_t len = sizeof(tv);
+    return getOption(SOL_SOCKET, SO_SNDTIMEO, &tv, &len)
+        ? static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000 : -1;
 }
 
 void Socket::setSendTimeout(int64_t v) {
@@ -82,11 +80,10 @@ void Socket::setSendTimeout(int64_t v) {
 }
 
 int64_t Socket::getRecvTimeout() {
-    FdCtx::ptr ctx = FdMgr::GetInstance()->get(m_sock);
-    if(ctx) {
-        return ctx->getTimeout(SO_RCVTIMEO);
-    }
-    return -1;
+    timeval tv{};
+    socklen_t len = sizeof(tv);
+    return getOption(SOL_SOCKET, SO_RCVTIMEO, &tv, &len)
+        ? static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000 : -1;
 }
 
 void Socket::setRecvTimeout(int64_t v) {
@@ -130,28 +127,25 @@ Socket::ptr Socket::accept() {
 }
 
 bool Socket::init(int sock) {
-    FdCtx::ptr ctx = FdMgr::GetInstance()->get(sock);
-    if(ctx && ctx->isSocket() && !ctx->isClose()) {
-        m_sock = sock;
-        m_isConnected = true;
-        initSock();
-        getLocalAddress();
-        getRemoteAddress();
-        return true;
-    }
-    return false;
+    if(sock < 0) return false;
+    m_sock = sock;
+    m_isConnected = true;
+    initSock();
+    getLocalAddress();
+    getRemoteAddress();
+    return true;
 }
 
 bool Socket::bind(const Address::ptr addr) {
     //m_localAddress = addr;
     if(!isValid()) {
         newSock();
-        if(SYLAR_UNLIKELY(!isValid())) {
+        if(!isValid()) {
             return false;
         }
     }
 
-    if(SYLAR_UNLIKELY(addr->getFamily() != m_family)) {
+    if(addr->getFamily() != m_family) {
         SYLAR_LOG_ERROR(g_logger) << "bind sock.family("
             << m_family << ") addr.family(" << addr->getFamily()
             << ") not equal, addr=" << addr->toString();
@@ -190,12 +184,12 @@ bool Socket::connect(const Address::ptr addr, uint64_t timeout_ms) {
     m_remoteAddress = addr;
     if(!isValid()) {
         newSock();
-        if(SYLAR_UNLIKELY(!isValid())) {
+        if(!isValid()) {
             return false;
         }
     }
 
-    if(SYLAR_UNLIKELY(addr->getFamily() != m_family)) {
+    if(addr->getFamily() != m_family) {
         SYLAR_LOG_ERROR(g_logger) << "connect sock.family("
             << m_family << ") addr.family(" << addr->getFamily()
             << ") not equal, addr=" << addr->toString();
@@ -210,13 +204,19 @@ bool Socket::connect(const Address::ptr addr, uint64_t timeout_ms) {
             return false;
         }
     } else {
-        if(::connect_with_timeout(m_sock, addr->getAddr(), addr->getAddrLen(), timeout_ms)) {
-            SYLAR_LOG_ERROR(g_logger) << "sock=" << m_sock << " connect(" << addr->toString()
-                << ") timeout=" << timeout_ms << " error errno="
-                << errno << " errstr=" << strerror(errno);
-            close();
-            return false;
+        int flags = ::fcntl(m_sock, F_GETFL, 0);
+        if(flags < 0 || ::fcntl(m_sock, F_SETFL, flags | O_NONBLOCK) < 0) return false;
+        int rc = ::connect(m_sock, addr->getAddr(), addr->getAddrLen());
+        if(rc != 0 && errno != EINPROGRESS) { close(); return false; }
+        if(rc != 0) {
+            pollfd pfd{m_sock, POLLOUT, 0};
+            int wait_rc = ::poll(&pfd, 1, timeout_ms == (uint64_t)-1
+                                             ? -1 : static_cast<int>(timeout_ms));
+            if(wait_rc <= 0) { errno = wait_rc == 0 ? ETIMEDOUT : errno; close(); return false; }
+            int error = getError();
+            if(error != 0) { errno = error; close(); return false; }
         }
+        ::fcntl(m_sock, F_SETFL, flags);
     }
     m_isConnected = true;
     getRemoteAddress();
@@ -246,7 +246,7 @@ bool Socket::close() {
         ::close(m_sock);
         m_sock = -1;
     }
-    return false;
+    return true;
 }
 
 int Socket::send(const void* buffer, size_t length, int flags) {
@@ -430,19 +430,19 @@ std::string Socket::toString() const {
 }
 
 bool Socket::cancelRead() {
-    return IOManager::GetThis()->cancelEvent(m_sock, sylar::IOManager::READ);
+    return close();
 }
 
 bool Socket::cancelWrite() {
-    return IOManager::GetThis()->cancelEvent(m_sock, sylar::IOManager::WRITE);
+    return close();
 }
 
 bool Socket::cancelAccept() {
-    return IOManager::GetThis()->cancelEvent(m_sock, sylar::IOManager::READ);
+    return close();
 }
 
 bool Socket::cancelAll() {
-    return IOManager::GetThis()->cancelAll(m_sock);
+    return close();
 }
 
 void Socket::initSock() {
@@ -454,8 +454,8 @@ void Socket::initSock() {
 }
 
 void Socket::newSock() {
-    m_sock = socket(m_family, m_type, m_protocol);
-    if(SYLAR_LIKELY(m_sock != -1)) {
+    m_sock = ::socket(m_family, m_type, m_protocol);
+    if(m_sock != -1) {
         initSock();
     } else {
         SYLAR_LOG_ERROR(g_logger) << "socket(" << m_family
@@ -546,12 +546,10 @@ int SSLSocket::send(const iovec* buffers, size_t length, int flags) {
 }
 
 int SSLSocket::sendTo(const void* buffer, size_t length, const Address::ptr to, int flags) {
-    SYLAR_ASSERT(false);
     return -1;
 }
 
 int SSLSocket::sendTo(const iovec* buffers, size_t length, const Address::ptr to, int flags) {
-    SYLAR_ASSERT(false);
     return -1;
 }
 
@@ -581,12 +579,10 @@ int SSLSocket::recv(iovec* buffers, size_t length, int flags) {
 }
 
 int SSLSocket::recvFrom(void* buffer, size_t length, Address::ptr from, int flags) {
-    SYLAR_ASSERT(false);
     return -1;
 }
 
 int SSLSocket::recvFrom(iovec* buffers, size_t length, Address::ptr from, int flags) {
-    SYLAR_ASSERT(false);
     return -1;
 }
 

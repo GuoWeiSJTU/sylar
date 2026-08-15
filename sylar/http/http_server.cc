@@ -1,55 +1,47 @@
 #include "http_server.h"
-#include "sylar/log.h"
+
 #include "sylar/http/servlets/config_servlet.h"
 #include "sylar/http/servlets/status_servlet.h"
+#include "sylar/log.h"
 
-namespace sylar {
-namespace http {
+namespace sylar { namespace http {
 
-static sylar::Logger::ptr g_logger = SYLAR_LOG_NAME("system");
+namespace { Logger::ptr g_logger = SYLAR_LOG_NAME("http_server"); }
 
-HttpServer::HttpServer(bool keepalive
-               ,sylar::IOManager* worker
-               ,sylar::IOManager* io_worker
-               ,sylar::IOManager* accept_worker)
-    :TcpServer(worker, io_worker, accept_worker)
-    ,m_isKeepalive(keepalive) {
-    m_dispatch.reset(new ServletDispatch);
-
+HttpServer::HttpServer(bool keepalive, size_t thread_count)
+    :TcpServer(thread_count)
+    ,m_keepalive(keepalive)
+    ,m_dispatch(std::make_shared<ServletDispatch>()) {
     m_type = "http";
-    m_dispatch->addServlet("/_/status", Servlet::ptr(new StatusServlet));
-    m_dispatch->addServlet("/_/config", Servlet::ptr(new ConfigServlet));
+    m_dispatch->addServlet("/_/status", std::make_shared<StatusServlet>());
+    m_dispatch->addServlet("/_/config", std::make_shared<ConfigServlet>());
 }
 
-void HttpServer::setName(const std::string& v) {
-    TcpServer::setName(v);
-    m_dispatch->setDefault(std::make_shared<NotFoundServlet>(v));
+void HttpServer::setName(const std::string& value) {
+    TcpServer::setName(value);
+    m_dispatch->setDefault(std::make_shared<NotFoundServlet>(value));
 }
 
-void HttpServer::handleClient(Socket::ptr client) {
-    SYLAR_LOG_DEBUG(g_logger) << "handleClient " << *client;
-    HttpSession::ptr session(new HttpSession(client));
-    do {
-        auto req = session->recvRequest();
-        if(!req) {
-            SYLAR_LOG_DEBUG(g_logger) << "recv http request fail, errno="
-                << errno << " errstr=" << strerror(errno)
-                << " cliet:" << *client << " keep_alive=" << m_isKeepalive;
-            break;
+Task<void> HttpServer::handleClient(AsyncSocket::ptr client,
+                                    std::stop_token stop) {
+    AsyncHttpSession session(std::move(client));
+    auto legacy_session = std::make_shared<HttpSession>(nullptr, false);
+    const auto deadline = AsyncHttpSession::Clock::now() +
+                          std::chrono::milliseconds(m_recv_timeout);
+    while(!stop.stop_requested()) {
+        auto request = co_await session.receiveRequest(deadline, stop);
+        if(!request) {
+            SYLAR_LOG_DEBUG(g_logger) << "HTTP receive failed: "
+                                      << request.error().message();
+            co_return;
         }
-
-        HttpResponse::ptr rsp(new HttpResponse(req->getVersion()
-                            ,req->isClose() || !m_isKeepalive));
-        rsp->setHeader("Server", getName());
-        m_dispatch->handle(req, rsp, session);
-        session->sendResponse(rsp);
-
-        if(!m_isKeepalive || req->isClose()) {
-            break;
-        }
-    } while(true);
-    session->close();
+        auto response = std::make_shared<HttpResponse>(request.value()->getVersion(),
+            request.value()->isClose() || !m_keepalive);
+        response->setHeader("Server", getName());
+        m_dispatch->handle(request.value(), response, legacy_session);
+        auto sent = co_await session.sendResponse(response, deadline, stop);
+        if(!sent || !m_keepalive || request.value()->isClose()) co_return;
+    }
 }
 
-}
-}
+}}

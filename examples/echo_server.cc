@@ -1,76 +1,33 @@
 #include "sylar/tcp_server.h"
-#include "sylar/log.h"
-#include "sylar/iomanager.h"
-#include "sylar/bytearray.h"
+#include "sylar/net/async_socket.h"
+#include "sylar/coroutine/task.h"
 #include "sylar/address.h"
 
-static sylar::Logger::ptr g_logger = SYLAR_LOG_ROOT();
+#include <array>
+#include <chrono>
+#include <thread>
 
 class EchoServer : public sylar::TcpServer {
 public:
-    EchoServer(int type);
-    void handleClient(sylar::Socket::ptr client);
-
-private:
-    int m_type = 0;
+    explicit EchoServer(size_t threads = 0) : sylar::TcpServer(threads) {}
+protected:
+    sylar::Task<void> handleClient(sylar::AsyncSocket::ptr client,
+                                   std::stop_token stop) override {
+        std::array<std::byte, 4096> buffer{};
+        while(!stop.stop_requested()) {
+            auto result = co_await client->read(std::span<std::byte>(buffer.data(), buffer.size()),
+                sylar::AsyncSocket::Clock::now() + std::chrono::seconds(30), stop);
+            if(!result || result.value() == 0) co_return;
+            if(!(co_await client->writeAll(std::span<const std::byte>(buffer.data(), result.value()),
+                    sylar::AsyncSocket::Clock::now() + std::chrono::seconds(30), stop))) co_return;
+        }
+    }
 };
 
-EchoServer::EchoServer(int type)
-    :m_type(type) {
-}
-
-void EchoServer::handleClient(sylar::Socket::ptr client) {
-    SYLAR_LOG_INFO(g_logger) << "handleClient " << *client;   
-    sylar::ByteArray::ptr ba(new sylar::ByteArray);
-    while(true) {
-        ba->clear();
-        std::vector<iovec> iovs;
-        ba->getWriteBuffers(iovs, 1024);
-
-        int rt = client->recv(&iovs[0], iovs.size());
-        if(rt == 0) {
-            SYLAR_LOG_INFO(g_logger) << "client close: " << *client;
-            break;
-        } else if(rt < 0) {
-            SYLAR_LOG_INFO(g_logger) << "client error rt=" << rt
-                << " errno=" << errno << " errstr=" << strerror(errno);
-            break;
-        }
-        ba->setPosition(ba->getPosition() + rt);
-        ba->setPosition(0);
-        //SYLAR_LOG_INFO(g_logger) << "recv rt=" << rt << " data=" << std::string((char*)iovs[0].iov_base, rt);
-        if(m_type == 1) {//text 
-            std::cout << ba->toString();// << std::endl;
-        } else {
-            std::cout << ba->toHexString();// << std::endl;
-        }
-        std::cout.flush();
-    }
-}
-
-int type = 1;
-
-void run() {
-    SYLAR_LOG_INFO(g_logger) << "server type=" << type;
-    EchoServer::ptr es(new EchoServer(type));
-    auto addr = sylar::Address::LookupAny("0.0.0.0:8020");
-    while(!es->bind(addr)) {
-        sleep(2);
-    }
-    es->start();
-}
-
-int main(int argc, char** argv) {
-    if(argc < 2) {
-        SYLAR_LOG_INFO(g_logger) << "used as[" << argv[0] << " -t] or [" << argv[0] << " -b]";
-        return 0;
-    }
-
-    if(!strcmp(argv[1], "-b")) {
-        type = 2;
-    }
-
-    sylar::IOManager iom(2);
-    iom.schedule(run);
+int main() {
+    auto server = std::make_shared<EchoServer>(2);
+    auto address = sylar::Address::LookupAny("0.0.0.0:8020");
+    if(!server->bind(address) || !server->start()) return 1;
+    while(!server->isStopped()) std::this_thread::sleep_for(std::chrono::seconds(1));
     return 0;
 }

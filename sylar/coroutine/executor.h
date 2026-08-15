@@ -15,7 +15,7 @@
 
 namespace sylar {
 
-/** @brief C++20 coroutine work scheduler backed by jthreads. */
+/** @brief C++20 coroutine work executor backed by jthreads. */
 class Executor : Noncopyable {
 public:
     explicit Executor(size_t thread_count = 1);

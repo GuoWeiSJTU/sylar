@@ -4,6 +4,9 @@
 #include "sylar/coroutine/timer_queue.h"
 #include "sylar/http/async_http_session.h"
 #include "sylar/http/async_websocket_session.h"
+#include "sylar/rock/async_rock_session.h"
+#include "sylar/rock/rock_protocol.h"
+#include "sylar/endian.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -15,7 +18,6 @@
 #include <cstring>
 #include <sys/epoll.h>
 #include <sys/socket.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 using namespace sylar;
@@ -100,6 +102,18 @@ static Task<void> await_socket_read(
         result.set_value('e');
     }
     co_return;
+}
+
+static Task<void> await_rock(sylar::AsyncRockSession& session,
+                             std::promise<std::string>& result) {
+    auto message = co_await session.receive(
+        sylar::AsyncRockSession::Clock::now() + std::chrono::seconds(2));
+    if(!message) {
+        result.set_value("error");
+        co_return;
+    }
+    auto request = std::dynamic_pointer_cast<sylar::RockRequest>(message.value());
+    result.set_value(request ? request->getBody() : "error");
 }
 
 int main() {
@@ -229,7 +243,7 @@ int main() {
             0x81, 0x82, 0x01, 0x02, 0x03, 0x04,
             static_cast<unsigned char>('h' ^ 0x01),
             static_cast<unsigned char>('i' ^ 0x02)};
-        assert(::syscall(SYS_write, websocket_fds[1], frame, sizeof(frame)) ==
+        assert(::write(websocket_fds[1], frame, sizeof(frame)) ==
                static_cast<ssize_t>(sizeof(frame)));
         auto task = await_websocket(session, result);
         task.start(executor);
@@ -239,9 +253,8 @@ int main() {
         unsigned char response[4] = {};
         size_t received = 0;
         while(received < sizeof(response)) {
-            ssize_t count = static_cast<ssize_t>(::syscall(
-                SYS_read, websocket_fds[1], response + received,
-                sizeof(response) - received));
+            ssize_t count = ::read(websocket_fds[1], response + received,
+                                   sizeof(response) - received);
             assert(count > 0);
             received += static_cast<size_t>(count);
         }
@@ -263,8 +276,7 @@ int main() {
         const std::string request =
             "GET /cpp20 HTTP/1.1\r\nHost: localhost\r\n"
             "Content-Length: 0\r\n\r\n";
-        ssize_t sent = static_cast<ssize_t>(::syscall(
-            SYS_write, socket_fds[1], request.data(), request.size()));
+        ssize_t sent = ::write(socket_fds[1], request.data(), request.size());
         if(sent != static_cast<ssize_t>(request.size())) {
             std::cerr << "send failed fd=" << socket_fds[1] << " errno="
                       << errno << " " << std::strerror(errno) << std::endl;
@@ -277,5 +289,35 @@ int main() {
         assert(future.get() == "/cpp20");
     }
     ::close(socket_fds[1]);
+
+    int rock_fds[2] = {-1, -1};
+    assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, rock_fds) == 0);
+    {
+        Executor executor(1);
+        Reactor reactor(executor);
+        auto socket = std::make_shared<AsyncSocket>(rock_fds[0], reactor, executor);
+        AsyncRockSession session(socket);
+        std::promise<std::string> result;
+        auto future = result.get_future();
+        RockRequest request;
+        request.setSn(7);
+        request.setCmd(9);
+        request.setBody("rock-body");
+        auto body = request.toByteArray();
+        body->setPosition(0);
+        RockMsgHeader header;
+        header.length = byteswapOnLittleEndian(static_cast<int32_t>(body->getReadSize()));
+        std::string packet(sizeof(header), '\0');
+        std::memcpy(packet.data(), &header, sizeof(header));
+        packet.append(body->toString());
+        assert(::write(rock_fds[1], packet.data(), packet.size()) ==
+               static_cast<ssize_t>(packet.size()));
+        auto task = await_rock(session, result);
+        task.start(executor);
+        assert(future.wait_for(std::chrono::seconds(2)) ==
+               std::future_status::ready);
+        assert(future.get() == "rock-body");
+    }
+    ::close(rock_fds[1]);
     return 0;
 }

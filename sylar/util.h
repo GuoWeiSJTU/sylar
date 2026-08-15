@@ -40,7 +40,7 @@ pid_t GetThreadId();
 /**
  * @brief 返回当前协程的ID
  */
-uint32_t GetFiberId();
+uint32_t GetCoroutineId();
 
 /**
  * @brief 获取当前的调用栈

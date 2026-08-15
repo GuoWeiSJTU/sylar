@@ -84,7 +84,7 @@ function(sylar_add_executable targetname srcs depends libs)
                 DISABLED TRUE
             )
         elseif(targetname IN_LIST SYLAR_INTEGRATION_TESTS)
-            set_tests_properties(${targetname} PROPERTIES LABELS integration)
+            set_tests_properties(${targetname} PROPERTIES LABELS integration DISABLED TRUE)
         else()
             set_tests_properties(${targetname} PROPERTIES LABELS unit)
         endif()

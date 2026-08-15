@@ -1,5 +1,8 @@
 #include "status_servlet.h"
-#include "sylar/sylar.h"
+#include "sylar/application.h"
+#include "sylar/daemon.h"
+#include "sylar/util.h"
+#include "sylar/log.h"
 
 namespace sylar {
 namespace http {
@@ -44,17 +47,6 @@ int32_t StatusServlet::handle(sylar::http::HttpRequest::ptr request
     ss << "===================================================" << std::endl;
     XX("server_version") << "sylar/1.0.0" << std::endl;
     
-    std::vector<Module::ptr> ms;
-    ModuleMgr::GetInstance()->listAll(ms);
-
-    XX("modules");
-    for(size_t i = 0; i < ms.size(); ++i) {
-        if(i) {
-            ss << ";";
-        }
-        ss << ms[i]->getId();
-    }
-    ss << std::endl;
     XX("host") << GetHostName() << std::endl;
     XX("ipv4") << GetIPv4() << std::endl;
     XX("daemon_id") << ProcessInfoMgr::GetInstance()->parent_id << std::endl;
@@ -65,13 +57,11 @@ int32_t StatusServlet::handle(sylar::http::HttpRequest::ptr request
     XX("daemon_running_time") << format_used_time(time(0) - ProcessInfoMgr::GetInstance()->parent_start_time) << std::endl;
     XX("main_running_time") << format_used_time(time(0) - ProcessInfoMgr::GetInstance()->main_start_time) << std::endl;
     ss << "===================================================" << std::endl;
-    XX("fibers") << sylar::Fiber::TotalFibers() << std::endl;
+    XX("runtime") << "coroutine" << std::endl;
     ss << "===================================================" << std::endl;
     ss << "<Logger>" << std::endl;
     ss << sylar::LoggerMgr::GetInstance()->toYamlString() << std::endl;
     ss << "===================================================" << std::endl;
-    ss << "<Woker>" << std::endl;
-    sylar::WorkerMgr::GetInstance()->dump(ss) << std::endl;
 
     std::map<std::string, std::vector<TcpServer::ptr> > servers;
     sylar::Application::GetInstance()->listAllServer(servers);
@@ -119,13 +109,6 @@ int32_t StatusServlet::handle(sylar::http::HttpRequest::ptr request
         }
     }
     ss << "===================================================" << std::endl;
-    for(size_t i = 0; i < ms.size(); ++i) {
-        if(i) {
-            ss << "***************************************************" << std::endl;
-        }
-        ss << ms[i]->statusString() << std::endl;
-    }
-
     response->setBody(ss.str());
     return 0;
 }

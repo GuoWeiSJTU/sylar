@@ -1,34 +1,20 @@
 #include "sylar/http/http_server.h"
-#include "sylar/log.h"
+#include "sylar/address.h"
 
-sylar::Logger::ptr g_logger = SYLAR_LOG_ROOT();
-sylar::IOManager::ptr worker;
-void run() {
-    g_logger->setLevel(sylar::LogLevel::INFO);
-    sylar::Address::ptr addr = sylar::Address::LookupAnyIPAddress("0.0.0.0:8020");
-    if(!addr) {
-        SYLAR_LOG_ERROR(g_logger) << "get address error";
-        return;
-    }
+#include <chrono>
+#include <thread>
 
-    sylar::http::HttpServer::ptr http_server(new sylar::http::HttpServer(true, worker.get()));
-    //sylar::http::HttpServer::ptr http_server(new sylar::http::HttpServer(true));
-    bool ssl = false;
-    while(!http_server->bind(addr, ssl)) {
-        SYLAR_LOG_ERROR(g_logger) << "bind " << *addr << " fail";
-        sleep(1);
-    }
-
-    if(ssl) {
-        //http_server->loadCertificates("/home/apps/soft/sylar/keys/server.crt", "/home/apps/soft/sylar/keys/server.key");
-    }
-
-    http_server->start();
-}
-
-int main(int argc, char** argv) {
-    sylar::IOManager iom(1);
-    worker.reset(new sylar::IOManager(4, false));
-    iom.schedule(run);
+int main() {
+    auto server = std::make_shared<sylar::http::HttpServer>(true, 2);
+    auto address = sylar::Address::LookupAny("0.0.0.0:8020");
+    if(!server->bind(address) || !server->start()) return 1;
+    auto dispatch = server->getServletDispatch();
+    dispatch->addServlet("/hello", [](sylar::http::HttpRequest::ptr,
+                                      sylar::http::HttpResponse::ptr response,
+                                      sylar::http::HttpSession::ptr) {
+        response->setBody("hello from sylar coroutine runtime\n");
+        return 0;
+    });
+    while(!server->isStopped()) std::this_thread::sleep_for(std::chrono::seconds(1));
     return 0;
 }

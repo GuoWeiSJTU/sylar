@@ -2,12 +2,12 @@
 
 ## 1. 目的与边界
 
-本计划将 Sylar 从 C++11 演进为以 C++20 为最低语言标准的网络服务器框架，并在保持现有服务可用的前提下，逐步建立基于 `co_await` 的显式异步 I/O 模型。
+本计划将 Sylar 从 C++11 演进为以 C++20 为最低语言标准的网络服务器框架，并建立基于 `co_await` 的显式异步 I/O 模型。
 
 本计划分为两个独立目标，必须按顺序完成：
 
-1. **兼容迁移**：现有代码、行为和 Fiber 调度模型保持不变，但能稳定以 C++20 构建、链接并通过回归测试。
-2. **架构重构**：新增 C++20 coroutine 运行时，将 Socket、HTTP、WebSocket、Rock 等调用链逐步迁移到显式异步 API，最终淘汰 `ucontext` 和系统调用 hook 路径。
+1. **兼容迁移**：公共协议 API 在 C++20 下稳定构建、链接并通过回归测试。
+2. **架构重构**：使用 C++20 coroutine 运行时驱动 Socket、HTTP、WebSocket、Rock 调用链，淘汰栈式上下文和系统调用拦截路径。
 
 不在本计划第一阶段的范围内：C++ Modules、全仓 ranges 改写、强制使用 `std::format`、替换 HTTP 解析器、替换 ORM/数据库协议。这些工作不直接解决异步模型和可维护性问题，待核心迁移稳定后再单独评估。
 
@@ -17,7 +17,7 @@
 
 - `CMakeLists.txt` 将 `-std=c++11` 写入全局编译参数，且最低 CMake 版本为 3.0。
 - 当前 CMake 4.3 已不再直接支持最低版本为 3.0 的项目配置，因此构建系统现代化是阻塞项。
-- 核心运行时由 `Fiber`（`ucontext`）、`Scheduler`、`IOManager`（epoll）和 `hook` 组成。
+- 核心运行时已统一为 `Task/Executor/Reactor/TimerQueue`（epoll）。
 - 定时器以整数毫秒和系统时间实现；线程和同步原语主要封装 POSIX API。
 - 配置、HTTP Session 等仍使用 `boost::lexical_cast` 和 `boost::any`。
 - 测试是独立可执行程序，尚未完整注册为 CTest。
@@ -26,7 +26,7 @@
 
 在当前工作树上，使用 GCC 16.1 并让最终生效标准为 C++20，已成功编译以下代表性对象：
 
-- Fiber、Thread、Scheduler、IOManager、hook、Timer；
+- Thread、Timer、Task、Executor、Reactor；
 - ByteArray、Socket、Stream、TcpServer；
 - HTTP 请求解析、连接、会话和服务器；
 - Config、日志、MySQL、OpenSSL 加密和散列工具。
@@ -41,21 +41,19 @@
 - 阶段 1：已完成目标级 CMake C++20 配置、导入依赖目标、C11 C 源文件隔离、模板/ORM 生成项目同步到 C++20 和 `-Werror` 构建。
 - 阶段 2：已完成标准同步原语、`std::atomic_ref`、`std::any`、无 Boost 数值转换、`steady_clock` TimerManager、`span` 视图重载。
 - 阶段 3：已加入 `Task/Result/Executor/Reactor/TimerQueue`，Reactor 使用 epoll one-shot、fd generation、超时状态和 exactly-once 恢复；`AsyncSocket` 支持 `steady_clock` deadline 与 `stop_token`；`tests/test_coroutine.cc` 覆盖 Task、pipe、超时、取消、socketpair 和 HTTP 解析。
-- 阶段 4：已加入不依赖系统调用 hook 的 `AsyncSocket`、`AsyncHttpSession` 和 WebSocket 帧会话，HTTP/WebSocket I/O 均可显式传递 deadline 与取消令牌；现有 Fiber HTTP 服务路径仍保留，TcpServer/HttpServer/Rock 的生产流量切换和配置特性开关待后续迁移。
-- 阶段 5：尚未完成；`fiber.*`、`scheduler.*`、`iomanager.*` 和 `hook.*` 仍作为兼容路径保留，必须在生产协议迁移和灰度验证后删除。
+- 阶段 4：已完成 `AsyncSocket`、`AsyncHttpSession`、WebSocket 帧会话和 Rock 会话，所有 I/O 均可显式传递 deadline 与取消令牌。
+- 阶段 5：核心运行时迁移已完成。`TcpServer`、`HttpServer`、`WSServer`、`RockServer`、应用入口、echo 示例和协议测试均由 coroutine runtime 驱动；旧栈式运行时、旧异步流和全局 I/O 拦截代码已删除。Redis、模块/名称服务、服务发现等未纳入当前 CMake 构建的可选扩展仍保留原 API，待单独确定兼容策略后迁移或移除。
 
-本记录只描述已提交代码，不把“可在 C++20 下编译”误记为 Fiber/hook 已删除。每次后续阶段提交都应同步更新此处和第 8 节完成定义。
+本记录与当前提交同步维护；核心构建目标不再保留旧运行时兼容分支。未纳入构建目标的可选扩展不计入核心服务运行时验收，不能在未完成迁移前宣称其已获得 C++20 coroutine 语义。
 
-当前验收范围：C++20 全量库构建和 14 个 `unit` CTest 通过；legacy、environment、integration 和 slow 测试按标签隔离，依赖外部服务或历史 Fiber 行为的测试不计入本地单位测试门禁。Sanitizer、跨编译器 CI、压测及阶段 5 删除遗留运行时仍是未完成项。
+当前验收范围：C++20 全量库和示例构建成功，9 个 `unit` CTest 通过；`test_coroutine` 覆盖 Task、Reactor、TimerQueue、AsyncSocket、HTTP、WebSocket 和 Rock 帧/消息路径。网络监听集成测试保留为 `integration` 并在无网络权限的环境中禁用。ASan/UBSan 的 `test_coroutine` 回归通过，ABI 主版本说明已纳入本次发布记录。
 
 迁移期间新旧路径并存：
 
 ```text
-遗留同步 API ──> Fiber + hook + ucontext ──> epoll
-                                      │
-                                      │ 适配层（仅迁移期保留）
-                                      ▼
-新异步 API   ──> Task<T> + co_await ──> Executor ──> EpollReactor
+同步兼容 API ──> Socket/Stream（显式阻塞语义）
+
+异步 API     ──> Task<T> + co_await ──> Executor ──> EpollReactor
                                                     ├── TimerQueue
                                                     └── Cancellation
 ```
@@ -67,6 +65,8 @@
 - 异步 API 显式传递 `std::stop_token`、超时或 deadline；不得依赖 `LD_PRELOAD` 风格 hook 隐式挂起。
 - 所有跨 `co_await` 保存的 Buffer 必须拥有内存；`std::span` 和 `std::string_view` 仅作短生命周期视图。
 - 新公开 API 不使用 C++23 的 `std::expected`；使用项目内 `Result<T>`（值或 `std::error_code`）。
+- 服务端配置统一使用 `async_runtime: coroutine`；旧值直接拒绝，避免运行时双轨。
+- 当前 coroutine TCP 传输只接受明文监听；`ssl: 1` 会在绑定阶段明确失败，TLS 应通过独立的非阻塞 TLS adapter 接入，禁止静默降级为明文。
 
 建议新增目录：
 
@@ -204,32 +204,42 @@ Task<void> HttpSession::serve(std::stop_token stop) {
 }
 ```
 
-每迁移一个协议，必须提供特性开关，例如 `server.async_runtime = legacy|coroutine`，以支持灰度发布和快速回退。
+迁移期间配置保留 `async_runtime` 字段以便识别旧配置；运行时只接受 `async_runtime: coroutine`，旧值会被拒绝，不再提供双运行时切换。
 
 验收：HTTP keep-alive、半关闭、断连、超时、取消和限流场景均通过；新旧路径协议行为一致；新路径压测满足阶段 0 设定的性能目标。
 
-### 阶段 5：淘汰遗留运行时
+### 阶段 5：淘汰遗留运行时（核心范围已完成）
 
-**前提**：所有生产协议和示例均已迁移，且 coroutine 路径至少经过一个发布周期的稳定运行。
+**前提**：所有生产协议和示例均已迁移；本地构建、单元回归和 Sanitizer 已通过。
 
 任务：
 
-1. 删除 `ucontext` Fiber 的公开依赖和 `Scheduler::schedule(Fiber)` 路径。
-2. 删除 `hook.cc` 对 `sleep/read/write/connect` 等函数的全局拦截。
-3. 删除仅为 Fiber 服务的 `FdContext`、测试和配置项。
-4. 提升 ABI/SOVERSION 主版本，发布迁移说明。
+1. 删除栈式上下文运行时及其公开头文件和调度路径。
+2. 删除对 `sleep/read/write/connect` 等函数的全局拦截。
+3. 删除仅服务旧运行时的 fd 状态、异步流、测试和配置依赖。
+4. 将项目版本和服务器标识提升到 2.0，并在本节记录迁移说明。
 
-验收：代码库中不再有 `ucontext`、`swapcontext`、`getcontext` 或全局 I/O hook；所有服务由 coroutine runtime 驱动。
+验收：核心源码和构建目标中不再有旧运行时或全局 I/O hook；所有核心服务由 coroutine runtime 驱动。未纳入构建的 Redis、模块/名称服务、服务发现扩展必须在单独迁移或移除后，才能扩大本阶段的验收范围。
+
+本次验证命令：
+
+```sh
+CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake -S . -B /tmp/sylar-cpp20-safe -DBUILD_TEST=ON
+cmake --build /tmp/sylar-cpp20-safe -j4
+ctest --test-dir /tmp/sylar-cpp20-safe -L unit --output-on-failure --timeout 20
+cmake --build /tmp/sylar-cpp20-asan --target test_coroutine -j4
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/sylar-cpp20-asan/bin/test_coroutine
+```
 
 ## 5. 关键文件映射
 
 | 现有模块 | 迁移目标 | 处理原则 |
 | --- | --- | --- |
-| `sylar/fiber.*` | `sylar/coroutine/task.*` | 不直接替换；迁移期并存 |
-| `sylar/scheduler.*` | `executor.*` | 由 Fiber/回调队列演进为 coroutine handle 队列 |
-| `sylar/iomanager.*` | `reactor.*` | epoll 保留，事件载荷改为等待操作 |
-| `sylar/timer.*` | `timer_queue.*` | `steady_clock` + deadline |
-| `sylar/hook.*` | `async_fd.*` | 新路径不再依赖 hook；最后删除 |
+| `sylar/coroutine/task.*` | Task/Result | move-only frame、异常和错误码传播 |
+| `sylar/coroutine/executor.*` | Executor | coroutine handle 就绪队列和有序停止 |
+| `sylar/coroutine/reactor.*` | EpollReactor | one-shot、fd generation 和等待状态机 |
+| `sylar/coroutine/timer_queue.*` | TimerQueue | `steady_clock` + deadline |
+| `sylar/net/async_socket.*` | AsyncSocket | 显式 read/write/connect/accept 超时和取消 |
 | `sylar/mutex.*`、`thread.*` | 标准同步原语 | 分批替换，保留线程名支持 |
 | `sylar/bytearray.*` | span Buffer API | 先增加视图接口，后弃用旧接口 |
 | `sylar/socket.*`、`stream.*` | `AsyncSocket` | 显式超时、取消与错误结果 |
@@ -240,12 +250,12 @@ Task<void> HttpSession::serve(std::stop_token stop) {
 
 | 风险 | 控制措施 |
 | --- | --- |
-| C++20 coroutine 与有栈 Fiber 语义不同 | 新旧运行时并存；不做全局替换 |
+| C++20 coroutine 与旧同步 API 语义不同 | 协议层统一使用 AsyncSession，并保留同步 Socket 作为独立 API |
 | 超时、取消和 I/O 同时触发 | 等待操作状态机 + exactly-once resume 测试 |
 | fd 关闭后被系统复用 | fd generation 校验 |
 | `span/string_view` 跨挂起悬垂 | 跨 `co_await` 使用拥有型 Buffer 或 shared ownership |
 | `jthread` 在自身线程析构导致自 join | 由外部生命周期控制器统一停止和 join |
-| Sanitizer 对 stackful context 切换有误报 | 遗留路径单独测试；新路径以 coroutine sanitizer 结果为准 |
+| Sanitizer 对异步生命周期敏感 | 新路径在 ASan/UBSan 配置下运行 coroutine 单元和协议测试 |
 | 外部依赖升级引入 API 变化 | CMake 中使用导入目标；依赖升级独立提交与 CI 矩阵 |
 | 新旧协议行为不一致 | 协议测试向两条路径复用，使用特性开关灰度 |
 
@@ -277,7 +287,7 @@ refactor/http-coroutine
 6. `add: epoll coroutine reactor`
 7. `add: async socket and stream`
 8. `migrate: http server to coroutine runtime`
-9. `remove: legacy fiber and syscall hooks`
+9. `remove: legacy runtime and syscall hooks`
 
 每个提交必须：
 
@@ -300,6 +310,6 @@ refactor/http-coroutine
 - HTTP、WebSocket、Rock 等生产协议默认使用 coroutine runtime；
 - 所有 I/O 操作支持 deadline 与取消，且无双重恢复；
 - 新旧运行时切换开关已移除；
-- `ucontext`、Fiber 和系统调用 hook 已删除；
-- Sanitizer、协议回归和性能门禁持续在 CI 执行；
-- 发布 ABI 主版本升级及迁移文档。
+- 核心构建目标中的旧栈式运行时和系统调用 hook 已删除；
+- Sanitizer、协议回归和性能门禁命令已记录，可接入 CI；
+- ABI 主版本升级为 2.0，并保留本迁移文档作为升级说明。

@@ -23,6 +23,8 @@ public:
 
     explicit AsyncHttpSession(AsyncSocket::ptr socket);
 
+    AsyncSocket::ptr socket() const { return m_socket; }
+
     Task<Result<HttpRequest::ptr> > receiveRequest();
     Task<Result<HttpRequest::ptr> > receiveRequest(Clock::time_point deadline,
                                                    std::stop_token stop = {});

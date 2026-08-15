@@ -1,304 +1,115 @@
 #include "application.h"
 
+#include <algorithm>
+#include <chrono>
+#include <csignal>
+#include <fstream>
+#include <thread>
 #include <unistd.h>
-#include <signal.h>
 
-#include "sylar/tcp_server.h"
-#include "sylar/daemon.h"
 #include "sylar/config.h"
+#include "sylar/daemon.h"
 #include "sylar/env.h"
 #include "sylar/log.h"
-#include "sylar/module.h"
-#include "sylar/rock/rock_stream.h"
-#include "sylar/worker.h"
-#include "sylar/http/ws_server.h"
-#include "sylar/rock/rock_server.h"
-#include "sylar/ns/name_server_module.h"
 
 namespace sylar {
 
-static sylar::Logger::ptr g_logger = SYLAR_LOG_NAME("system");
-
-static sylar::ConfigVar<std::string>::ptr g_server_work_path =
-    sylar::Config::Lookup("server.work_path"
-            ,std::string("/apps/work/sylar")
-            , "server work path");
-
-static sylar::ConfigVar<std::string>::ptr g_server_pid_file =
-    sylar::Config::Lookup("server.pid_file"
-            ,std::string("sylar.pid")
-            , "server pid file");
-
-static sylar::ConfigVar<std::vector<TcpServerConf> >::ptr g_servers_conf
-    = sylar::Config::Lookup("servers", std::vector<TcpServerConf>(), "http server config");
+namespace {
+Logger::ptr g_logger = SYLAR_LOG_NAME("application");
+ConfigVar<std::string>::ptr g_server_work_path = Config::Lookup(
+    "server.work_path", std::string("/tmp/sylar"), "server work path");
+ConfigVar<std::string>::ptr g_server_pid_file = Config::Lookup(
+    "server.pid_file", std::string("sylar.pid"), "server pid file");
+ConfigVar<std::vector<TcpServerConf>>::ptr g_servers_conf = Config::Lookup(
+    "servers", std::vector<TcpServerConf>(), "coroutine server configuration");
+Application* g_signal_application = nullptr;
+void onSignal(int) { if(g_signal_application) g_signal_application->stop(); }
+}
 
 Application* Application::s_instance = nullptr;
 
-Application::Application() {
-    s_instance = this;
-}
+Application::Application() { s_instance = this; }
 
 bool Application::init(int argc, char** argv) {
     m_argc = argc;
     m_argv = argv;
-
-    sylar::EnvMgr::GetInstance()->addHelp("s", "start with the terminal");
-    sylar::EnvMgr::GetInstance()->addHelp("d", "run as daemon");
-    sylar::EnvMgr::GetInstance()->addHelp("c", "conf path default: ./conf");
-    sylar::EnvMgr::GetInstance()->addHelp("p", "print help");
-
-    bool is_print_help = false;
-    if(!sylar::EnvMgr::GetInstance()->init(argc, argv)) {
-        is_print_help = true;
-    }
-
-    if(sylar::EnvMgr::GetInstance()->has("p")) {
-        is_print_help = true;
-    }
-
-    std::string conf_path = sylar::EnvMgr::GetInstance()->getConfigPath();
-    SYLAR_LOG_INFO(g_logger) << "load conf path:" << conf_path;
-    sylar::Config::LoadFromConfDir(conf_path);
-
-    ModuleMgr::GetInstance()->init();
-    std::vector<Module::ptr> modules;
-    ModuleMgr::GetInstance()->listAll(modules);
-
-    for(auto i : modules) {
-        i->onBeforeArgsParse(argc, argv);
-    }
-
-    if(is_print_help) {
-        sylar::EnvMgr::GetInstance()->printHelp();
+    EnvMgr::GetInstance()->addHelp("s", "start with the terminal");
+    EnvMgr::GetInstance()->addHelp("d", "run as daemon");
+    EnvMgr::GetInstance()->addHelp("c", "conf path default: ./conf");
+    EnvMgr::GetInstance()->addHelp("p", "print help");
+    if(!EnvMgr::GetInstance()->init(argc, argv) || EnvMgr::GetInstance()->has("p")) {
+        EnvMgr::GetInstance()->printHelp();
         return false;
     }
-
-    for(auto i : modules) {
-        i->onAfterArgsParse(argc, argv);
-    }
-    modules.clear();
-
-    int run_type = 0;
-    if(sylar::EnvMgr::GetInstance()->has("s")) {
-        run_type = 1;
-    }
-    if(sylar::EnvMgr::GetInstance()->has("d")) {
-        run_type = 2;
-    }
-
-    if(run_type == 0) {
-        sylar::EnvMgr::GetInstance()->printHelp();
+    Config::LoadFromConfDir(EnvMgr::GetInstance()->getConfigPath());
+    if(!EnvMgr::GetInstance()->has("s") && !EnvMgr::GetInstance()->has("d")) {
+        EnvMgr::GetInstance()->printHelp();
         return false;
     }
-
-    std::string pidfile = g_server_work_path->getValue()
-                                + "/" + g_server_pid_file->getValue();
-    if(sylar::FSUtil::IsRunningPidfile(pidfile)) {
-        SYLAR_LOG_ERROR(g_logger) << "server is running:" << pidfile;
-        return false;
-    }
-
-    if(!sylar::FSUtil::Mkdir(g_server_work_path->getValue())) {
-        SYLAR_LOG_FATAL(g_logger) << "create work path [" << g_server_work_path->getValue()
-            << " errno=" << errno << " errstr=" << strerror(errno);
+    const std::string path = g_server_work_path->getValue();
+    if(!FSUtil::Mkdir(path)) {
+        SYLAR_LOG_ERROR(g_logger) << "cannot create work path " << path;
         return false;
     }
     return true;
 }
 
 bool Application::run() {
-    bool is_daemon = sylar::EnvMgr::GetInstance()->has("d");
+    const bool daemon_mode = EnvMgr::GetInstance()->has("d");
     return start_daemon(m_argc, m_argv,
-            std::bind(&Application::main, this, std::placeholders::_1,
-                std::placeholders::_2), is_daemon);
+        [this](int argc, char** argv) { return main(argc, argv); }, daemon_mode) == 0;
 }
 
-int Application::main(int argc, char** argv) {
-    signal(SIGPIPE, SIG_IGN);
-    SYLAR_LOG_INFO(g_logger) << "main";
-    std::string conf_path = sylar::EnvMgr::GetInstance()->getConfigPath();
-    sylar::Config::LoadFromConfDir(conf_path, true);
-    {
-        std::string pidfile = g_server_work_path->getValue()
-                                    + "/" + g_server_pid_file->getValue();
-        std::ofstream ofs(pidfile);
-        if(!ofs) {
-            SYLAR_LOG_ERROR(g_logger) << "open pidfile " << pidfile << " failed";
-            return false;
-        }
-        ofs << getpid();
-    }
-
-    m_mainIOManager.reset(new sylar::IOManager(1, true, "main"));
-    m_mainIOManager->schedule(std::bind(&Application::run_fiber, this));
-    m_mainIOManager->addTimer(2000, [](){
-            //SYLAR_LOG_INFO(g_logger) << "hello";
-    }, true);
-    m_mainIOManager->stop();
-    return 0;
+int Application::main(int, char**) {
+    std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGINT, onSignal);
+    std::signal(SIGTERM, onSignal);
+    g_signal_application = this;
+    const std::string pidfile = g_server_work_path->getValue() + "/" + g_server_pid_file->getValue();
+    std::ofstream(pidfile) << getpid();
+    const int result = run_servers();
+    while(m_running.load()) std::this_thread::sleep_for(std::chrono::seconds(1));
+    for(auto& group : m_servers) for(auto& server : group.second) server->stop();
+    unlink(pidfile.c_str());
+    return result;
 }
 
-int Application::run_fiber() {
-    std::vector<Module::ptr> modules;
-    ModuleMgr::GetInstance()->listAll(modules);
-    bool has_error = false;
-    for(auto& i : modules) {
-        if(!i->onLoad()) {
-            SYLAR_LOG_ERROR(g_logger) << "module name="
-                << i->getName() << " version=" << i->getVersion()
-                << " filename=" << i->getFilename();
-            has_error = true;
+int Application::run_servers() {
+    for(const auto& conf : g_servers_conf->getValue()) {
+        if(conf.async_runtime != "coroutine") {
+            SYLAR_LOG_ERROR(g_logger) << "only async_runtime=coroutine is supported";
+            return -1;
         }
-    }
-    if(has_error) {
-        _exit(0);
-    }
-
-    sylar::WorkerMgr::GetInstance()->init();
-    auto http_confs = g_servers_conf->getValue();
-    std::vector<TcpServer::ptr> svrs;
-    for(auto& i : http_confs) {
-        SYLAR_LOG_DEBUG(g_logger) << std::endl << LexicalCast<TcpServerConf, std::string>()(i);
-
-        std::vector<Address::ptr> address;
-        for(auto& a : i.address) {
-            size_t pos = a.find(":");
-            if(pos == std::string::npos) {
-                //SYLAR_LOG_ERROR(g_logger) << "invalid address: " << a;
-                address.push_back(UnixAddress::ptr(new UnixAddress(a)));
-                continue;
-            }
-            int32_t port = atoi(a.substr(pos + 1).c_str());
-            //127.0.0.1
-            auto addr = sylar::IPAddress::Create(a.substr(0, pos).c_str(), port);
-            if(addr) {
-                address.push_back(addr);
-                continue;
-            }
-            std::vector<std::pair<Address::ptr, uint32_t> > result;
-            if(sylar::Address::GetInterfaceAddresses(result,
-                                        a.substr(0, pos))) {
-                for(auto& x : result) {
-                    auto ipaddr = std::dynamic_pointer_cast<IPAddress>(x.first);
-                    if(ipaddr) {
-                        ipaddr->setPort(atoi(a.substr(pos + 1).c_str()));
-                    }
-                    address.push_back(ipaddr);
-                }
-                continue;
-            }
-
-            auto aaddr = sylar::Address::LookupAny(a);
-            if(aaddr) {
-                address.push_back(aaddr);
-                continue;
-            }
-            SYLAR_LOG_ERROR(g_logger) << "invalid address: " << a;
-            _exit(0);
+        std::vector<Address::ptr> addresses;
+        for(const auto& value : conf.address) {
+            const size_t colon = value.rfind(':');
+            if(colon == std::string::npos) addresses.push_back(Address::LookupAny(value));
+            else addresses.push_back(IPAddress::Create(value.substr(0, colon).c_str(),
+                                                        static_cast<uint16_t>(std::stoi(value.substr(colon + 1)))));
         }
-        IOManager* accept_worker = sylar::IOManager::GetThis();
-        IOManager* io_worker = sylar::IOManager::GetThis();
-        IOManager* process_worker = sylar::IOManager::GetThis();
-        if(!i.accept_worker.empty()) {
-            accept_worker = sylar::WorkerMgr::GetInstance()->getAsIOManager(i.accept_worker).get();
-            if(!accept_worker) {
-                SYLAR_LOG_ERROR(g_logger) << "accept_worker: " << i.accept_worker
-                    << " not exists";
-                _exit(0);
-            }
-        }
-        if(!i.io_worker.empty()) {
-            io_worker = sylar::WorkerMgr::GetInstance()->getAsIOManager(i.io_worker).get();
-            if(!io_worker) {
-                SYLAR_LOG_ERROR(g_logger) << "io_worker: " << i.io_worker
-                    << " not exists";
-                _exit(0);
-            }
-        }
-        if(!i.process_worker.empty()) {
-            process_worker = sylar::WorkerMgr::GetInstance()->getAsIOManager(i.process_worker).get();
-            if(!process_worker) {
-                SYLAR_LOG_ERROR(g_logger) << "process_worker: " << i.process_worker
-                    << " not exists";
-                _exit(0);
-            }
-        }
-
+        addresses.erase(std::remove(addresses.begin(), addresses.end(), nullptr), addresses.end());
         TcpServer::ptr server;
-        if(i.type == "http") {
-            server.reset(new sylar::http::HttpServer(i.keepalive,
-                            process_worker, io_worker, accept_worker));
-        } else if(i.type == "ws") {
-            server.reset(new sylar::http::WSServer(
-                            process_worker, io_worker, accept_worker));
-        } else if(i.type == "rock") {
-            server.reset(new sylar::RockServer("rock",
-                            process_worker, io_worker, accept_worker));
-        } else if(i.type == "nameserver") {
-            server.reset(new sylar::RockServer("nameserver",
-                            process_worker, io_worker, accept_worker));
-            ModuleMgr::GetInstance()->add(std::make_shared<sylar::ns::NameServerModule>());
-        } else {
-            SYLAR_LOG_ERROR(g_logger) << "invalid server type=" << i.type
-                << LexicalCast<TcpServerConf, std::string>()(i);
-            _exit(0);
-        }
-        if(!i.name.empty()) {
-            server->setName(i.name);
-        }
-        std::vector<Address::ptr> fails;
-        if(!server->bind(address, fails, i.ssl)) {
-            for(auto& x : fails) {
-                SYLAR_LOG_ERROR(g_logger) << "bind address fail:"
-                    << *x;
-            }
-            _exit(0);
-        }
-        if(i.ssl) {
-            if(!server->loadCertificates(i.cert_file, i.key_file)) {
-                SYLAR_LOG_ERROR(g_logger) << "loadCertificates fail, cert_file="
-                    << i.cert_file << " key_file=" << i.key_file;
-            }
-        }
-        server->setConf(i);
-        //server->start();
-        m_servers[i.type].push_back(server);
-        svrs.push_back(server);
+        if(conf.type == "http") server = std::make_shared<http::HttpServer>(conf.keepalive != 0);
+        else if(conf.type == "ws") server = std::make_shared<http::WSServer>();
+        else if(conf.type == "rock" || conf.type == "nameserver") server = std::make_shared<RockServer>(conf.type);
+        else { SYLAR_LOG_ERROR(g_logger) << "unknown server type " << conf.type; return -1; }
+        if(!conf.name.empty()) server->setName(conf.name);
+        std::vector<Address::ptr> failures;
+        if(!server->bind(addresses, failures, conf.ssl != 0) || !server->start()) return -1;
+        server->setConf(conf);
+        m_servers[conf.type].push_back(std::move(server));
     }
-
-    for(auto& i : modules) {
-        i->onServerReady();
-    }
-
-    for(auto& i : svrs) {
-        i->start();
-    }
-
-    for(auto& i : modules) {
-        i->onServerUp();
-    }
-    //ZKServiceDiscovery::ptr m_serviceDiscovery;
-    //RockSDLoadBalance::ptr m_rockSDLoadBalance;
-    //sylar::ZKServiceDiscovery::ptr zksd(new sylar::ZKServiceDiscovery("127.0.0.1:21811"));
-    //zksd->registerServer("blog", "chat", sylar::GetIPv4() + ":8090", "xxx");
-    //zksd->queryServer("blog", "chat");
-    //zksd->setSelfInfo(sylar::GetIPv4() + ":8090");
-    //zksd->setSelfData("vvv");
-    //static RockSDLoadBalance::ptr rsdlb(new RockSDLoadBalance(zksd));
-    //rsdlb->start();
     return 0;
 }
 
-bool Application::getServer(const std::string& type, std::vector<TcpServer::ptr>& svrs) {
+bool Application::getServer(const std::string& type, std::vector<TcpServer::ptr>& servers) {
     auto it = m_servers.find(type);
-    if(it == m_servers.end()) {
-        return false;
-    }
-    svrs = it->second;
+    if(it == m_servers.end()) return false;
+    servers = it->second;
     return true;
 }
 
-void Application::listAllServer(std::map<std::string, std::vector<TcpServer::ptr> >& servers) {
+void Application::listAllServer(std::map<std::string, std::vector<TcpServer::ptr>>& servers) {
     servers = m_servers;
 }
 
