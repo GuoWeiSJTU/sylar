@@ -68,7 +68,17 @@ function(sylar_add_executable targetname srcs depends libs)
     target_link_libraries(${targetname} PRIVATE ${libs})
     if(BUILD_TESTING AND targetname MATCHES "^test")
         add_test(NAME ${targetname} COMMAND ${targetname})
-        if(targetname IN_LIST SYLAR_SLOW_TESTS)
+        if(targetname IN_LIST SYLAR_LEGACY_TESTS)
+            set_tests_properties(${targetname} PROPERTIES
+                LABELS legacy
+                DISABLED TRUE
+            )
+        elseif(targetname IN_LIST SYLAR_ENVIRONMENT_TESTS)
+            set_tests_properties(${targetname} PROPERTIES
+                LABELS environment
+                DISABLED TRUE
+            )
+        elseif(targetname IN_LIST SYLAR_SLOW_TESTS)
             set_tests_properties(${targetname} PROPERTIES
                 LABELS slow
                 DISABLED TRUE

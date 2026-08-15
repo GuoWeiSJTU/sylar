@@ -4,26 +4,18 @@
 
 namespace sylar {
 
-Semaphore::Semaphore(uint32_t count) {
-    if(sem_init(&m_semaphore, 0, count)) {
-        throw std::logic_error("sem_init error");
-    }
+Semaphore::Semaphore(uint32_t count)
+    :m_semaphore(static_cast<std::ptrdiff_t>(count)) {
 }
 
-Semaphore::~Semaphore() {
-    sem_destroy(&m_semaphore);
-}
+Semaphore::~Semaphore() = default;
 
 void Semaphore::wait() {
-    if(sem_wait(&m_semaphore)) {
-        throw std::logic_error("sem_wait error");
-    }
+    m_semaphore.acquire();
 }
 
 void Semaphore::notify() {
-    if(sem_post(&m_semaphore)) {
-        throw std::logic_error("sem_post error");
-    }
+    m_semaphore.release();
 }
 
 FiberSemaphore::FiberSemaphore(size_t initial_concurrency)

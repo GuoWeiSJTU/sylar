@@ -132,6 +132,13 @@ void Fiber::back() {
 
 //切换到当前协程执行
 void Fiber::swapIn() {
+    if(!Scheduler::GetMainFiber()) {
+        // A standalone Fiber has no Scheduler root fiber.  Reuse the thread
+        // context created by GetThis() so the compatibility API remains safe
+        // while callers migrate to Task.
+        call();
+        return;
+    }
     SetThis(this);
     SYLAR_ASSERT(m_state != EXEC);
     m_state = EXEC;
@@ -142,6 +149,10 @@ void Fiber::swapIn() {
 
 //切换到后台执行
 void Fiber::swapOut() {
+    if(!Scheduler::GetMainFiber()) {
+        back();
+        return;
+    }
     SetThis(Scheduler::GetMainFiber());
     if(swapcontext(&m_ctx, &Scheduler::GetMainFiber()->m_ctx)) {
         SYLAR_ASSERT2(false, "swapcontext");

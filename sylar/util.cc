@@ -85,6 +85,14 @@ uint64_t GetCurrentUS() {
     return tv.tv_sec * 1000 * 1000ul  + tv.tv_usec;
 }
 
+SteadyClock::time_point SteadyNow() noexcept {
+    return SteadyClock::now();
+}
+
+SystemClock::time_point SystemNow() noexcept {
+    return SystemClock::now();
+}
+
 std::string Time2Str(time_t ts, const std::string& format) {
     struct tm tm;
     localtime_r(&ts, &tm);

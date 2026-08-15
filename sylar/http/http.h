@@ -10,12 +10,13 @@
 #define __SYLAR_HTTP_HTTP_H__
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <map>
 #include <vector>
 #include <iostream>
 #include <sstream>
-#include <boost/lexical_cast.hpp>
+#include "../util/lexical_cast.h"
 
 namespace sylar {
 namespace http {
@@ -202,7 +203,7 @@ bool checkGetAs(const MapType& m, const std::string& key, T& val, const T& def =
         return false;
     }
     try {
-        val = boost::lexical_cast<T>(it->second);
+        val = sylar::detail::lexical_cast<T>(it->second);
         return true;
     } catch (...) {
         val = def;
@@ -224,7 +225,7 @@ T getAs(const MapType& m, const std::string& key, const T& def = T()) {
         return def;
     }
     try {
-        return boost::lexical_cast<T>(it->second);
+        return sylar::detail::lexical_cast<T>(it->second);
     } catch (...) {
     }
     return def;
@@ -237,7 +238,7 @@ class HttpResponse;
 class HttpRequest {
 public:
     /// HTTP请求的智能指针
-    typedef std::shared_ptr<HttpRequest> ptr;
+    using ptr = std::shared_ptr<HttpRequest>;
     /// MAP结构
     typedef std::map<std::string, std::string, CaseInsensitiveLess> MapType;
     /**
@@ -583,7 +584,7 @@ private:
 class HttpResponse {
 public:
     /// HTTP响应结构智能指针
-    typedef std::shared_ptr<HttpResponse> ptr;
+    using ptr = std::shared_ptr<HttpResponse>;
     /// MapType
     typedef std::map<std::string, std::string, CaseInsensitiveLess> MapType;
     /**

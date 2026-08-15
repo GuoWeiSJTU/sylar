@@ -24,16 +24,16 @@ bool Timer::Comparator::operator()(const Timer::ptr& lhs
 }
 
 
-Timer::Timer(uint64_t ms, std::function<void()> cb,
+Timer::Timer(Duration interval, std::function<void()> cb,
              bool recurring, TimerManager* manager)
     :m_recurring(recurring)
-    ,m_ms(ms)
+    ,m_interval(interval)
     ,m_cb(cb)
     ,m_manager(manager) {
-    m_next = sylar::GetCurrentMS() + m_ms;
+    m_next = Clock::now() + m_interval;
 }
 
-Timer::Timer(uint64_t next)
+Timer::Timer(TimePoint next)
     :m_next(next) {
 }
 
@@ -58,13 +58,17 @@ bool Timer::refresh() {
         return false;
     }
     m_manager->m_timers.erase(it);
-    m_next = sylar::GetCurrentMS() + m_ms;
+    m_next = Clock::now() + m_interval;
     m_manager->m_timers.insert(shared_from_this());
     return true;
 }
 
 bool Timer::reset(uint64_t ms, bool from_now) {
-    if(ms == m_ms && !from_now) {
+    return reset(Duration(ms), from_now);
+}
+
+bool Timer::reset(Duration interval, bool from_now) {
+    if(interval == m_interval && !from_now) {
         return true;
     }
     TimerManager::RWMutexType::WriteLock lock(m_manager->m_mutex);
@@ -76,21 +80,21 @@ bool Timer::reset(uint64_t ms, bool from_now) {
         return false;
     }
     m_manager->m_timers.erase(it);
-    uint64_t start = 0;
     if(from_now) {
-        start = sylar::GetCurrentMS();
+        auto start = Clock::now();
+        m_interval = interval;
+        m_next = start + m_interval;
     } else {
-        start = m_next - m_ms;
+        auto start = m_next - m_interval;
+        m_interval = interval;
+        m_next = start + m_interval;
     }
-    m_ms = ms;
-    m_next = start + m_ms;
     m_manager->addTimer(shared_from_this(), lock);
     return true;
 
 }
 
 TimerManager::TimerManager() {
-    m_previouseTime = sylar::GetCurrentMS();
 }
 
 TimerManager::~TimerManager() {
@@ -98,7 +102,13 @@ TimerManager::~TimerManager() {
 
 Timer::ptr TimerManager::addTimer(uint64_t ms, std::function<void()> cb
                                   ,bool recurring) {
-    Timer::ptr timer(new Timer(ms, cb, recurring, this));
+    return addTimer(Timer::Duration(ms), std::move(cb), recurring);
+}
+
+Timer::ptr TimerManager::addTimer(Timer::Duration interval,
+                                  std::function<void()> cb,
+                                  bool recurring) {
+    Timer::ptr timer(new Timer(interval, std::move(cb), recurring, this));
     RWMutexType::WriteLock lock(m_mutex);
     addTimer(timer, lock);
     return timer;
@@ -114,7 +124,19 @@ static void OnTimer(std::weak_ptr<void> weak_cond, std::function<void()> cb) {
 Timer::ptr TimerManager::addConditionTimer(uint64_t ms, std::function<void()> cb
                                     ,std::weak_ptr<void> weak_cond
                                     ,bool recurring) {
-    return addTimer(ms, std::bind(&OnTimer, weak_cond, cb), recurring);
+    return addConditionTimer(Timer::Duration(ms), std::move(cb), weak_cond,
+                             recurring);
+}
+
+Timer::ptr TimerManager::addConditionTimer(Timer::Duration interval,
+                                           std::function<void()> cb,
+                                           std::weak_ptr<void> weak_cond,
+                                           bool recurring) {
+    return addTimer(interval,
+                    [weak_cond, cb = std::move(cb)] {
+                        OnTimer(weak_cond, cb);
+                    },
+                    recurring);
 }
 
 uint64_t TimerManager::getNextTimer() {
@@ -125,16 +147,17 @@ uint64_t TimerManager::getNextTimer() {
     }
 
     const Timer::ptr& next = *m_timers.begin();
-    uint64_t now_ms = sylar::GetCurrentMS();
-    if(now_ms >= next->m_next) {
+    auto now = Timer::Clock::now();
+    if(now >= next->m_next) {
         return 0;
     } else {
-        return next->m_next - now_ms;
+        return static_cast<uint64_t>(std::chrono::duration_cast<
+            Timer::Duration>(next->m_next - now).count());
     }
 }
 
 void TimerManager::listExpiredCb(std::vector<std::function<void()> >& cbs) {
-    uint64_t now_ms = sylar::GetCurrentMS();
+    auto now = Timer::Clock::now();
     std::vector<Timer::ptr> expired;
     {
         RWMutexType::ReadLock lock(m_mutex);
@@ -146,14 +169,12 @@ void TimerManager::listExpiredCb(std::vector<std::function<void()> >& cbs) {
     if(m_timers.empty()) {
         return;
     }
-    bool rollover = detectClockRollover(now_ms);
-    if(!rollover && ((*m_timers.begin())->m_next > now_ms)) {
+    if((*m_timers.begin())->m_next > now) {
         return;
     }
 
-    Timer::ptr now_timer(new Timer(now_ms));
-    auto it = rollover ? m_timers.end() : m_timers.lower_bound(now_timer);
-    while(it != m_timers.end() && (*it)->m_next == now_ms) {
+    auto it = m_timers.begin();
+    while(it != m_timers.end() && (*it)->m_next <= now) {
         ++it;
     }
     expired.insert(expired.begin(), m_timers.begin(), it);
@@ -163,7 +184,7 @@ void TimerManager::listExpiredCb(std::vector<std::function<void()> >& cbs) {
     for(auto& timer : expired) {
         cbs.push_back(timer->m_cb);
         if(timer->m_recurring) {
-            timer->m_next = now_ms + timer->m_ms;
+            timer->m_next = now + timer->m_interval;
             m_timers.insert(timer);
         } else {
             timer->m_cb = nullptr;
@@ -182,16 +203,6 @@ void TimerManager::addTimer(Timer::ptr val, RWMutexType::WriteLock& lock) {
     if(at_front) {
         onTimerInsertedAtFront();
     }
-}
-
-bool TimerManager::detectClockRollover(uint64_t now_ms) {
-    bool rollover = false;
-    if(now_ms < m_previouseTime &&
-            now_ms < (m_previouseTime - 60 * 60 * 1000)) {
-        rollover = true;
-    }
-    m_previouseTime = now_ms;
-    return rollover;
 }
 
 bool TimerManager::hasTimer() {

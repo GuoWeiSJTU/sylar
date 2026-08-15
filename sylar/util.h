@@ -22,11 +22,13 @@
 #include <json/json.h>
 #include <yaml-cpp/yaml.h>
 #include <iostream>
-#include <boost/lexical_cast.hpp>
+#include <atomic>
+#include <chrono>
 #include <google/protobuf/message.h>
 #include "sylar/util/hash_util.h"
 #include "sylar/util/json_util.h"
 #include "sylar/util/crypto_util.h"
+#include "sylar/util/lexical_cast.h"
 
 namespace sylar {
 
@@ -66,6 +68,16 @@ uint64_t GetCurrentMS();
  */
 uint64_t GetCurrentUS();
 
+using SteadyClock = std::chrono::steady_clock;
+using SystemClock = std::chrono::system_clock;
+using Milliseconds = std::chrono::milliseconds;
+
+/** @brief Monotonic timestamp for deadlines and timeout calculations. */
+SteadyClock::time_point SteadyNow() noexcept;
+
+/** @brief Wall-clock timestamp for logging and protocol metadata. */
+SystemClock::time_point SystemNow() noexcept;
+
 std::string ToUpper(const std::string& name);
 
 std::string ToLower(const std::string& name);
@@ -100,7 +112,7 @@ V GetParamValue(const Map& m, const K& k, const V& def = V()) {
         return def;
     }
     try {
-        return boost::lexical_cast<V>(it->second);
+        return detail::lexical_cast<V>(it->second);
     } catch (...) {
     }
     return def;
@@ -113,7 +125,7 @@ bool CheckGetParamValue(const Map& m, const K& k, V& v) {
         return false;
     }
     try {
-        v = boost::lexical_cast<V>(it->second);
+        v = detail::lexical_cast<V>(it->second);
         return true;
     } catch (...) {
     }
@@ -133,73 +145,92 @@ public:
 class Atomic {
 public:
     template<class T, class S = T>
-    static T addFetch(volatile T& t, S v = 1) {
-        return __sync_add_and_fetch(&t, (T)v);
+    static T addFetch(T& t, S v = 1) {
+        return std::atomic_ref<T>(t).fetch_add(static_cast<T>(v)) + static_cast<T>(v);
     }
 
     template<class T, class S = T>
-    static T subFetch(volatile T& t, S v = 1) {
-        return __sync_sub_and_fetch(&t, (T)v);
+    static T subFetch(T& t, S v = 1) {
+        return std::atomic_ref<T>(t).fetch_sub(static_cast<T>(v)) - static_cast<T>(v);
     }
 
     template<class T, class S>
-    static T orFetch(volatile T& t, S v) {
-        return __sync_or_and_fetch(&t, (T)v);
+    static T orFetch(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_or(static_cast<T>(v)) | static_cast<T>(v);
     }
 
     template<class T, class S>
-    static T andFetch(volatile T& t, S v) {
-        return __sync_and_and_fetch(&t, (T)v);
+    static T andFetch(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_and(static_cast<T>(v)) & static_cast<T>(v);
     }
 
     template<class T, class S>
-    static T xorFetch(volatile T& t, S v) {
-        return __sync_xor_and_fetch(&t, (T)v);
+    static T xorFetch(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_xor(static_cast<T>(v)) ^ static_cast<T>(v);
     }
 
     template<class T, class S>
-    static T nandFetch(volatile T& t, S v) {
-        return __sync_nand_and_fetch(&t, (T)v);
+    static T nandFetch(T& t, S v) {
+        std::atomic_ref<T> value(t);
+        T expected = value.load();
+        do {
+            T desired = static_cast<T>(~(expected & static_cast<T>(v)));
+            if(value.compare_exchange_weak(expected, desired)) {
+                return desired;
+            }
+        } while(true);
     }
 
     template<class T, class S>
-    static T fetchAdd(volatile T& t, S v = 1) {
-        return __sync_fetch_and_add(&t, (T)v);
+    static T fetchAdd(T& t, S v = 1) {
+        return std::atomic_ref<T>(t).fetch_add(static_cast<T>(v));
     }
 
     template<class T, class S>
-    static T fetchSub(volatile T& t, S v = 1) {
-        return __sync_fetch_and_sub(&t, (T)v);
+    static T fetchSub(T& t, S v = 1) {
+        return std::atomic_ref<T>(t).fetch_sub(static_cast<T>(v));
     }
 
     template<class T, class S>
-    static T fetchOr(volatile T& t, S v) {
-        return __sync_fetch_and_or(&t, (T)v);
+    static T fetchOr(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_or(static_cast<T>(v));
     }
 
     template<class T, class S>
-    static T fetchAnd(volatile T& t, S v) {
-        return __sync_fetch_and_and(&t, (T)v);
+    static T fetchAnd(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_and(static_cast<T>(v));
     }
 
     template<class T, class S>
-    static T fetchXor(volatile T& t, S v) {
-        return __sync_fetch_and_xor(&t, (T)v);
+    static T fetchXor(T& t, S v) {
+        return std::atomic_ref<T>(t).fetch_xor(static_cast<T>(v));
     }
 
     template<class T, class S>
-    static T fetchNand(volatile T& t, S v) {
-        return __sync_fetch_and_nand(&t, (T)v);
+    static T fetchNand(T& t, S v) {
+        std::atomic_ref<T> value(t);
+        T expected = value.load();
+        do {
+            T desired = static_cast<T>(~(expected & static_cast<T>(v)));
+            if(value.compare_exchange_weak(expected, desired)) {
+                return expected;
+            }
+        } while(true);
     }
 
     template<class T, class S>
-    static T compareAndSwap(volatile T& t, S old_val, S new_val) {
-        return __sync_val_compare_and_swap(&t, (T)old_val, (T)new_val);
+    static T compareAndSwap(T& t, S old_val, S new_val) {
+        std::atomic_ref<T> value(t);
+        T expected = static_cast<T>(old_val);
+        value.compare_exchange_strong(expected, static_cast<T>(new_val));
+        return expected;
     }
 
     template<class T, class S>
-    static bool compareAndSwapBool(volatile T& t, S old_val, S new_val) {
-        return __sync_bool_compare_and_swap(&t, (T)old_val, (T)new_val);
+    static bool compareAndSwapBool(T& t, S old_val, S new_val) {
+        std::atomic_ref<T> value(t);
+        T expected = static_cast<T>(old_val);
+        return value.compare_exchange_strong(expected, static_cast<T>(new_val));
     }
 };
 

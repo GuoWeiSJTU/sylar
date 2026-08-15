@@ -12,7 +12,6 @@
 #include <memory>
 #include <string>
 #include <sstream>
-#include <boost/lexical_cast.hpp>
 #include <yaml-cpp/yaml.h>
 #include <vector>
 #include <list>
@@ -25,6 +24,7 @@
 #include "thread.h"
 #include "log.h"
 #include "util.h"
+#include "util/lexical_cast.h"
 
 namespace sylar {
 
@@ -33,7 +33,7 @@ namespace sylar {
  */
 class ConfigVarBase {
 public:
-    typedef std::shared_ptr<ConfigVarBase> ptr;
+    using ptr = std::shared_ptr<ConfigVarBase>;
     /**
      * @brief 构造函数
      * @param[in] name 配置参数名称[0-9a-z_.]
@@ -94,7 +94,7 @@ public:
      * @exception 当类型不可转换时抛出异常
      */
     T operator()(const F& v) {
-        return boost::lexical_cast<T>(v);
+        return detail::lexical_cast<T>(v);
     }
 };
 
@@ -353,7 +353,7 @@ public:
      */
     std::string toString() override {
         try {
-            //return boost::lexical_cast<std::string>(m_val);
+            //return detail::lexical_cast<std::string>(m_val);
             RWMutexType::ReadLock lock(m_mutex);
             return ToStr()(m_val);
         } catch (std::exception& e) {

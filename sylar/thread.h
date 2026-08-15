@@ -20,7 +20,7 @@ namespace sylar {
 class Thread : Noncopyable {
 public:
     /// 线程智能指针类型
-    typedef std::shared_ptr<Thread> ptr;
+    using ptr = std::shared_ptr<Thread>;
 
     /**
      * @brief 构造函数

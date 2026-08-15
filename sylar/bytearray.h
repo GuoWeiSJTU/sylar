@@ -10,11 +10,13 @@
 #define __SYLAR_BYTEARRAY_H__
 
 #include <memory>
+#include <cstddef>
 #include <string>
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <vector>
+#include <span>
 
 namespace sylar {
 
@@ -23,7 +25,7 @@ namespace sylar {
  */
 class ByteArray {
 public:
-    typedef std::shared_ptr<ByteArray> ptr;
+    using ptr = std::shared_ptr<ByteArray>;
 
     /**
      * @brief ByteArray的存储节点
@@ -350,6 +352,9 @@ public:
      * @post m_position += size, 如果m_position > m_size 则 m_size = m_position
      */
     void write(const void* buf, size_t size);
+    void write(std::span<const std::byte> buffer) {
+        write(buffer.data(), buffer.size());
+    }
 
     /**
      * @brief 读取size长度的数据
@@ -359,6 +364,9 @@ public:
      * @exception 如果getReadSize() < size 则抛出 std::out_of_range
      */
     void read(void* buf, size_t size);
+    void read(std::span<std::byte> buffer) {
+        read(buffer.data(), buffer.size());
+    }
 
     /**
      * @brief 读取size长度的数据
@@ -368,6 +376,9 @@ public:
      * @exception 如果 (m_size - position) < size 则抛出 std::out_of_range
      */
     void read(void* buf, size_t size, size_t position) const;
+    void read(std::span<std::byte> buffer, size_t position) const {
+        read(buffer.data(), buffer.size(), position);
+    }
 
     /**
      * @brief 返回ByteArray当前位置

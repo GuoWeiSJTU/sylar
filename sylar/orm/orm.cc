@@ -6,8 +6,8 @@ static sylar::Logger::ptr g_logger = SYLAR_LOG_NAME("orm");
 
 void gen_cmake(const std::string& path, const std::map<std::string, sylar::orm::Table::ptr>& tbs) {
     std::ofstream ofs(path + "/CMakeLists.txt");
-    ofs << "cmake_minimum_required(VERSION 3.0)" << std::endl;
-    ofs << "project(orm_data)" << std::endl;
+    ofs << "cmake_minimum_required(VERSION 3.20)" << std::endl;
+    ofs << "project(orm_data LANGUAGES CXX)" << std::endl;
     ofs << std::endl;
     ofs << "set(LIB_SRC" << std::endl;
     for(auto& i : tbs) {
@@ -16,6 +16,8 @@ void gen_cmake(const std::string& path, const std::map<std::string, sylar::orm::
     }
     ofs << ")" << std::endl;
     ofs << "add_library(orm_data ${LIB_SRC})" << std::endl;
+    ofs << "target_compile_features(orm_data PUBLIC cxx_std_20)" << std::endl;
+    ofs << "set_target_properties(orm_data PROPERTIES CXX_EXTENSIONS OFF)" << std::endl;
     ofs << "force_redefine_file_macro_for_sources(orm_data)" << std::endl;
 }
 

@@ -4,11 +4,13 @@
 #include <thread>
 #include <functional>
 #include <memory>
-#include <pthread.h>
-#include <semaphore.h>
 #include <stdint.h>
 #include <atomic>
 #include <list>
+#include <mutex>
+#include <shared_mutex>
+#include <semaphore>
+#include <limits>
 
 #include "noncopyable.h"
 #include "fiber.h"
@@ -41,7 +43,9 @@ public:
      */
     void notify();
 private:
-    sem_t m_semaphore;
+    static constexpr std::ptrdiff_t kMaxCount =
+        (std::numeric_limits<std::ptrdiff_t>::max)();
+    std::counting_semaphore<kMaxCount> m_semaphore;
 };
 
 /**
@@ -131,7 +135,7 @@ public:
      */
     void unlock() {
         if(m_locked) {
-            m_mutex.unlock();
+            m_mutex.rdunlock();
             m_locked = false;
         }
     }
@@ -202,33 +206,29 @@ public:
     /**
      * @brief 构造函数
      */
-    Mutex() {
-        pthread_mutex_init(&m_mutex, nullptr);
-    }
+    Mutex() = default;
 
     /**
      * @brief 析构函数
      */
-    ~Mutex() {
-        pthread_mutex_destroy(&m_mutex);
-    }
+    ~Mutex() = default;
 
     /**
      * @brief 加锁
      */
     void lock() {
-        pthread_mutex_lock(&m_mutex);
+        m_mutex.lock();
     }
 
     /**
      * @brief 解锁
      */
     void unlock() {
-        pthread_mutex_unlock(&m_mutex);
+        m_mutex.unlock();
     }
 private:
     /// mutex
-    pthread_mutex_t m_mutex;
+    std::mutex m_mutex;
 };
 
 /**
@@ -275,40 +275,41 @@ public:
     /**
      * @brief 构造函数
      */
-    RWMutex() {
-        pthread_rwlock_init(&m_lock, nullptr);
-    }
+    RWMutex() = default;
     
     /**
      * @brief 析构函数
      */
-    ~RWMutex() {
-        pthread_rwlock_destroy(&m_lock);
-    }
+    ~RWMutex() = default;
 
     /**
      * @brief 上读锁
      */
     void rdlock() {
-        pthread_rwlock_rdlock(&m_lock);
+        m_lock.lock_shared();
     }
 
     /**
      * @brief 上写锁
      */
     void wrlock() {
-        pthread_rwlock_wrlock(&m_lock);
+        m_lock.lock();
     }
 
     /**
      * @brief 解锁
      */
     void unlock() {
-        pthread_rwlock_unlock(&m_lock);
+        m_lock.unlock();
+    }
+
+    /** @brief 释放读锁 */
+    void rdunlock() {
+        m_lock.unlock_shared();
     }
 private:
     /// 读写锁
-    pthread_rwlock_t m_lock;
+    std::shared_mutex m_lock;
 };
 
 /**
@@ -317,9 +318,9 @@ private:
 class NullRWMutex : Noncopyable {
 public:
     /// 局部读锁
-    typedef ReadScopedLockImpl<NullMutex> ReadLock;
+    typedef ReadScopedLockImpl<NullRWMutex> ReadLock;
     /// 局部写锁
-    typedef WriteScopedLockImpl<NullMutex> WriteLock;
+    typedef WriteScopedLockImpl<NullRWMutex> WriteLock;
 
     /**
      * @brief 构造函数
@@ -343,6 +344,7 @@ public:
      * @brief 解锁
      */
     void unlock() {}
+    void rdunlock() {}
 };
 
 /**
@@ -356,33 +358,31 @@ public:
     /**
      * @brief 构造函数
      */
-    Spinlock() {
-        pthread_spin_init(&m_mutex, 0);
-    }
+    Spinlock() : m_mutex(ATOMIC_FLAG_INIT) {}
 
     /**
      * @brief 析构函数
      */
-    ~Spinlock() {
-        pthread_spin_destroy(&m_mutex);
-    }
+    ~Spinlock() = default;
 
     /**
      * @brief 上锁
      */
     void lock() {
-        pthread_spin_lock(&m_mutex);
+        while(m_mutex.test_and_set(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
     }
 
     /**
      * @brief 解锁
      */
     void unlock() {
-        pthread_spin_unlock(&m_mutex);
+        m_mutex.clear(std::memory_order_release);
     }
 private:
     /// 自旋锁
-    pthread_spinlock_t m_mutex;
+    std::atomic_flag m_mutex;
 };
 
 /**
@@ -421,7 +421,7 @@ public:
     }
 private:
     /// 原子状态
-    volatile std::atomic_flag m_mutex;
+    std::atomic_flag m_mutex;
 };
 
 class Scheduler;

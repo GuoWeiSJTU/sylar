@@ -35,6 +35,19 @@
 
 ## 3. 目标架构
 
+### 3.1 当前执行记录（2026-08）
+
+- 阶段 0：已完成 CTest 注册、单位/集成/慢测试标签划分和 C++20 全量库构建基线；Fiber 兼容回归和依赖硬编码路径的测试单独标记为 `legacy/environment` 并默认禁用，外部服务测试仍需相应服务和配置。
+- 阶段 1：已完成目标级 CMake C++20 配置、导入依赖目标、C11 C 源文件隔离、模板/ORM 生成项目同步到 C++20 和 `-Werror` 构建。
+- 阶段 2：已完成标准同步原语、`std::atomic_ref`、`std::any`、无 Boost 数值转换、`steady_clock` TimerManager、`span` 视图重载。
+- 阶段 3：已加入 `Task/Result/Executor/Reactor/TimerQueue`，Reactor 使用 epoll one-shot、fd generation、超时状态和 exactly-once 恢复；`AsyncSocket` 支持 `steady_clock` deadline 与 `stop_token`；`tests/test_coroutine.cc` 覆盖 Task、pipe、超时、取消、socketpair 和 HTTP 解析。
+- 阶段 4：已加入不依赖系统调用 hook 的 `AsyncSocket`、`AsyncHttpSession` 和 WebSocket 帧会话，HTTP/WebSocket I/O 均可显式传递 deadline 与取消令牌；现有 Fiber HTTP 服务路径仍保留，TcpServer/HttpServer/Rock 的生产流量切换和配置特性开关待后续迁移。
+- 阶段 5：尚未完成；`fiber.*`、`scheduler.*`、`iomanager.*` 和 `hook.*` 仍作为兼容路径保留，必须在生产协议迁移和灰度验证后删除。
+
+本记录只描述已提交代码，不把“可在 C++20 下编译”误记为 Fiber/hook 已删除。每次后续阶段提交都应同步更新此处和第 8 节完成定义。
+
+当前验收范围：C++20 全量库构建和 14 个 `unit` CTest 通过；legacy、environment、integration 和 slow 测试按标签隔离，依赖外部服务或历史 Fiber 行为的测试不计入本地单位测试门禁。Sanitizer、跨编译器 CI、压测及阶段 5 删除遗留运行时仍是未完成项。
+
 迁移期间新旧路径并存：
 
 ```text

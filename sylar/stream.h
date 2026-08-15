@@ -19,7 +19,7 @@ namespace sylar {
  */
 class Stream {
 public:
-    typedef std::shared_ptr<Stream> ptr;
+    using ptr = std::shared_ptr<Stream>;
     /**
      * @brief 析构函数
      */

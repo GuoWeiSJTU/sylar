@@ -28,3 +28,11 @@ stamp-h1
 *.pc
 depcomp
 *.xcodeproj
+/build/
+/lib/
+/bin/*
+!/bin/conf/
+!/bin/conf/**
+!/bin/orm_conf/
+!/bin/orm_conf/**
+test.db

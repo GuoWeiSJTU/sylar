@@ -30,7 +30,6 @@ endif()
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/sqlite-3.28.0)
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/tinyxml2-7.0.1)
 
-find_package(Boost REQUIRED)
 find_package(MySQL REQUIRED)
 find_package(Protobuf)
 find_package(OpenSSL REQUIRED)
@@ -56,6 +55,8 @@ set(LIB_SRC
     sylar/fiber.cc
     sylar/http/http.cc
     sylar/http/http_connection.cc
+    sylar/http/async_http_session.cc
+    sylar/http/async_websocket_session.cc
     sylar/http/http_parser.cc
     sylar/http/http_session.cc
     sylar/http/http_server.cc
@@ -97,6 +98,10 @@ set(LIB_SRC
     sylar/util/hash_util.cc
     sylar/worker.cc
     sylar/application.cc
+    sylar/coroutine/executor.cc
+    sylar/coroutine/reactor.cc
+    sylar/coroutine/timer_queue.cc
+    sylar/net/async_socket.cc
     )
 
 ragelmaker(sylar/http/http11_parser.rl LIB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/sylar/http)
@@ -121,6 +126,9 @@ target_compile_features(sylar
     PRIVATE c_std_11
 )
 set_target_properties(sylar PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF
@@ -129,10 +137,7 @@ set_target_properties(sylar PROPERTIES
 target_include_directories(sylar
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<BUILD_INTERFACE:/apps/sylar/include>
         $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${Boost_INCLUDE_DIRS}
         ${MYSQL_INCLUDE_DIR}
         ${Protobuf_INCLUDE_DIRS}
         ${OPENSSL_INCLUDE_DIR}
@@ -157,22 +162,22 @@ set(SYLAR_DEPENDENCIES
     dl
     yaml-cpp
     jsoncpp
-    ${ZLIB_LIBRARIES}
-    ${OPENSSL_LIBRARIES}
-    ${PROTOBUF_LIBRARIES}
+    ZLIB::ZLIB
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    $<$<BOOL:${Protobuf_FOUND}>:protobuf::libprotobuf>
     event
     mysqlclient
     sqlite3
     tinyxml2
     jemalloc
 )
-target_link_libraries(sylar PRIVATE ${SYLAR_DEPENDENCIES})
+target_link_libraries(sylar PUBLIC ${SYLAR_DEPENDENCIES})
 #add_library(sylar_static STATIC ${LIB_SRC})
 #SET_TARGET_PROPERTIES (sylar_static PROPERTIES OUTPUT_NAME "sylar")
 
 set(LIBS
         sylar
-        ${SYLAR_DEPENDENCIES}
         )
 
 set(SYLAR_INTEGRATION_TESTS
@@ -199,11 +204,21 @@ set(SYLAR_SLOW_TESTS
     test_iomanager
     test_bitmap
 )
+set(SYLAR_LEGACY_TESTS
+    test1
+    test_fiber
+    test_scheduler
+)
+set(SYLAR_ENVIRONMENT_TESTS
+    test_config
+    test_uri
+)
 sylar_add_executable(test_util "tests/test_util.cc" sylar "${LIBS}")
 sylar_add_executable(test_hashmultimap "tests/test_hashmultimap.cc" sylar "${LIBS}")
 sylar_add_executable(test_hashmap "tests/test_hashmap.cc" sylar "${LIBS}")
 sylar_add_executable(test_dict "tests/test_dict.cc" sylar "${LIBS}")
 sylar_add_executable(test_array "tests/test_array.cc" sylar "${LIBS}")
+sylar_add_executable(test_coroutine "tests/test_coroutine.cc" sylar "${LIBS}")
 if(BUILD_TEST)
 sylar_add_executable(test1 "tests/test.cc" sylar "${LIBS}")
 sylar_add_executable(test_config "tests/test_config.cc" sylar "${LIBS}")

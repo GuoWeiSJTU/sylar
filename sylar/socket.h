@@ -10,6 +10,8 @@
 #define __SYLAR_SOCKET_H__
 
 #include <memory>
+#include <cstddef>
+#include <span>
 #include <netinet/tcp.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -25,8 +27,8 @@ namespace sylar {
  */
 class Socket : public std::enable_shared_from_this<Socket>, Noncopyable {
 public:
-    typedef std::shared_ptr<Socket> ptr;
-    typedef std::weak_ptr<Socket> weak_ptr;
+    using ptr = std::shared_ptr<Socket>;
+    using weak_ptr = std::weak_ptr<Socket>;
 
     /**
      * @brief Socket类型
@@ -199,6 +201,9 @@ public:
      *      @retval <0 socket出错
      */
     virtual int send(const void* buffer, size_t length, int flags = 0);
+    int send(std::span<const std::byte> buffer, int flags = 0) {
+        return send(buffer.data(), buffer.size(), flags);
+    }
 
     /**
      * @brief 发送数据
@@ -249,6 +254,9 @@ public:
      *      @retval <0 socket出错
      */
     virtual int recv(void* buffer, size_t length, int flags = 0);
+    int recv(std::span<std::byte> buffer, int flags = 0) {
+        return recv(buffer.data(), buffer.size(), flags);
+    }
 
     /**
      * @brief 接受数据
