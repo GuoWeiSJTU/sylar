@@ -3,7 +3,7 @@
 
 #include "sylar/mutex.h"
 #include "sylar/singleton.h"
-#include <boost/any.hpp>
+#include <any>
 #include <unordered_map>
 
 namespace sylar {
@@ -27,10 +27,10 @@ public:
         if(it == m_datas.end()) {
             return def;
         }
-        boost::any v = it->second;
+        std::any v = it->second;
         lock.unlock();
         try {
-            return boost::any_cast<T>(v);
+            return std::any_cast<T>(v);
         } catch (...) {
         }
         return def;
@@ -46,7 +46,7 @@ public:
     void setId(const std::string& val) { m_id = val;}
 private:
     sylar::RWMutex m_mutex;
-    std::unordered_map<std::string, boost::any> m_datas;
+    std::unordered_map<std::string, std::any> m_datas;
     uint64_t m_lastAccessTime;
     std::string m_id;
 };

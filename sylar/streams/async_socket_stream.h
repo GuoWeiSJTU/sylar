@@ -4,7 +4,7 @@
 #include "socket_stream.h"
 #include <list>
 #include <unordered_map>
-#include <boost/any.hpp>
+#include <any>
 
 namespace sylar {
 
@@ -75,7 +75,7 @@ public:
     template<class T>
     T getData() const {
         try {
-            return boost::any_cast<T>(m_data);
+            return std::any_cast<T>(m_data);
         } catch (...) {
         }
         return T();
@@ -131,7 +131,7 @@ protected:
     connect_callback m_connectCb;
     disconnect_callback m_disconnectCb;
 
-    boost::any m_data;
+    std::any m_data;
 };
 
 class AsyncSocketStreamManager {

@@ -4,7 +4,7 @@
 #include "sylar/streams/async_socket_stream.h"
 #include "rock_protocol.h"
 #include "sylar/streams/load_balance.h"
-#include <boost/any.hpp>
+#include <any>
 
 namespace sylar {
 
@@ -53,7 +53,7 @@ public:
     template<class T>
     T getData() {
         try {
-            return boost::any_cast<T>(m_data);
+            return std::any_cast<T>(m_data);
         } catch(...) {
         }
         return T();
@@ -82,7 +82,7 @@ private:
     RockMessageDecoder::ptr m_decoder;
     request_handler m_requestHandler;
     notify_handler m_notifyHandler;
-    boost::any m_data;
+    std::any m_data;
 };
 
 class RockSession : public RockStream {
