@@ -1,5 +1,9 @@
-cmake_minimum_required(VERSION 3.0)
-project(sylar)
+cmake_minimum_required(VERSION 3.20)
+project(sylar VERSION 2.0.0 LANGUAGES C CXX)
+
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
 
 #add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/yaml-cpp)
 #add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/jsoncpp-1.8.4)
@@ -10,44 +14,28 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include (cmake/utils.cmake)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
-set(CMAKE_CXX_FLAGS "$ENV{CXXFLAGS} -rdynamic -O3 -fPIC -ggdb -std=c++11 -Wall -Wno-deprecated -Werror -Wno-unused-function -Wno-builtin-macro-redefined -Wno-deprecated-declarations")
-set(CMAKE_C_FLAGS "$ENV{CXXFLAGS} -rdynamic -O3 -fPIC -ggdb -std=c11 -Wall -Wno-deprecated -Werror -Wno-unused-function -Wno-builtin-macro-redefined -Wno-deprecated-declarations")
 
-include_directories(.)
-include_directories(/apps/sylar/include)
+option(BUILD_TEST "Build Sylar test and example targets" OFF)
+include(CTest)
+if(BUILD_TEST)
+    set(BUILD_TESTING ON CACHE BOOL "Enable CTest targets" FORCE)
+endif()
+if(BUILD_TESTING)
+    set(BUILD_TEST ON CACHE BOOL "Build Sylar test and example targets" FORCE)
+endif()
+
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart)
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/yaml-cpp/include)
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/jsoncpp-1.8.4/include)
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/sqlite-3.28.0)
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdpart/tinyxml2-7.0.1)
-link_directories(/apps/sylar/lib)
-link_directories(/apps/sylar/lib64)
-
-option(BUILD_TEST "ON for complile test" OFF)
 
 find_package(Boost REQUIRED)
-if(Boost_FOUND)
-    include_directories(${Boost_INCLUDE_DIRS})
-endif()
-
 find_package(MySQL REQUIRED)
-if(MYSQL_FOUND)
-    include_directories(${MYSQL_INCLUDE_DIR})
-endif()
-
 find_package(Protobuf)
-if(Protobuf_FOUND)
-    include_directories(${Protobuf_INCLUDE_DIRS})
-endif()
 find_package(OpenSSL REQUIRED)
-if(OPENSSL_FOUND)
-    include_directories(${OPENSSL_INCLUDE_DIR})
-endif()
-
 find_package(ZLIB REQUIRED)
-if(ZLIB_FOUND)
-    include_directories(${ZLIB_INCLUDE_DIR})
-endif()
+find_package(Threads REQUIRED)
 
 set(LIB_SRC
     sylar/address.cc
@@ -127,31 +115,90 @@ set_source_files_properties(sylar/ds/roaring.c PROPERTIES
 
 add_library(sylar SHARED ${LIB_SRC})
 force_redefine_file_macro_for_sources(sylar)
+
+target_compile_features(sylar
+    PUBLIC cxx_std_20
+    PRIVATE c_std_11
+)
+set_target_properties(sylar PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(sylar
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:/apps/sylar/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${Boost_INCLUDE_DIRS}
+        ${MYSQL_INCLUDE_DIR}
+        ${Protobuf_INCLUDE_DIRS}
+        ${OPENSSL_INCLUDE_DIR}
+        ${ZLIB_INCLUDE_DIR}
+)
+target_compile_options(sylar PRIVATE
+    -O3
+    -ggdb
+    -Wall
+    -Wno-deprecated
+    -Werror
+    -Wno-unused-function
+    -Wno-builtin-macro-redefined
+    -Wno-deprecated-declarations
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_options(sylar PRIVATE -rdynamic)
+endif()
+
+set(SYLAR_DEPENDENCIES
+    Threads::Threads
+    dl
+    yaml-cpp
+    jsoncpp
+    ${ZLIB_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    event
+    mysqlclient
+    sqlite3
+    tinyxml2
+    jemalloc
+)
+target_link_libraries(sylar PRIVATE ${SYLAR_DEPENDENCIES})
 #add_library(sylar_static STATIC ${LIB_SRC})
 #SET_TARGET_PROPERTIES (sylar_static PROPERTIES OUTPUT_NAME "sylar")
 
-#find_library(YAMLCPP yaml-cpp)
-find_library(PTHREAD pthread)
-#set(LIBS ${LIBS} sylar)
-#set(LIBS ${LIBS} dl)
-#set(LIBS ${LIBS} ${YAMLCPP})
-#set(LIBS ${LIBS} ${PTHREAD})
-
 set(LIBS
         sylar
-        dl
-        pthread
-        yaml-cpp
-        jsoncpp
-        ${ZLIB_LIBRARIES}
-        ${OPENSSL_LIBRARIES}
-        ${PROTOBUF_LIBRARIES}
-        event
-        mysqlclient
-        sqlite3
-        tinyxml2
-        jemalloc
+        ${SYLAR_DEPENDENCIES}
         )
+
+set(SYLAR_INTEGRATION_TESTS
+    test_tcp_server
+    test_http_server
+    test_socket
+    test_ws_server
+    test_ws_client
+    test_application
+    test_http_connection
+    test_daemon
+    test_sqlite3
+    test_mysql
+    test_rock
+    test_email
+    test_nameserver
+)
+
+set(SYLAR_SLOW_TESTS
+    test_hashmultimap
+    test_hashmap
+    test_dict
+    test_thread
+    test_iomanager
+    test_bitmap
+)
 sylar_add_executable(test_util "tests/test_util.cc" sylar "${LIBS}")
 sylar_add_executable(test_hashmultimap "tests/test_hashmultimap.cc" sylar "${LIBS}")
 sylar_add_executable(test_hashmap "tests/test_hashmap.cc" sylar "${LIBS}")
